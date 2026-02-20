@@ -11,7 +11,8 @@ const __dirname = path.dirname(__filename);
 function resolvePublicDir() {
   const candidates = [
     path.resolve(process.cwd(), 'public'),
-    path.resolve(__dirname, '../public')
+    path.resolve(__dirname, '../public'),
+    path.resolve(__dirname, '../../public')
   ];
 
   const found = candidates.find((dir) => fs.existsSync(path.join(dir, 'index.html')));
