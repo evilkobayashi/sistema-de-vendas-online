@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -6,6 +7,20 @@ import { deliveries, medicines, orders, tickets, users, type DeliveryStatus, typ
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+function resolvePublicDir() {
+  const candidates = [
+    path.resolve(process.cwd(), 'public'),
+    path.resolve(__dirname, '../public')
+  ];
+
+  const found = candidates.find((dir) => fs.existsSync(path.join(dir, 'index.html')));
+  if (!found) {
+    throw new Error('Diretório public não encontrado. Gere os assets ou valide o ambiente de execução.');
+  }
+
+  return found;
+}
 
 const saleSchema = z.object({
   userId: z.string().min(1),
@@ -27,7 +42,9 @@ const deliveryUpdateSchema = z.object({
 export function createApp() {
   const app = express();
   app.use(express.json());
-  app.use(express.static(path.resolve(__dirname, '../public')));
+  const publicDir = resolvePublicDir();
+
+  app.use(express.static(publicDir));
 
   app.post('/api/login', (req, res) => {
     const schema = z.object({ employeeCode: z.string(), password: z.string() });
@@ -163,7 +180,7 @@ export function createApp() {
   });
 
   app.get('*', (_, res) => {
-    res.sendFile(path.resolve(__dirname, '../public/index.html'));
+    res.sendFile(path.join(publicDir, 'index.html'));
   });
 
   return app;

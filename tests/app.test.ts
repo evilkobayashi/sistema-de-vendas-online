@@ -5,6 +5,12 @@ import { createApp } from '../src/app.js';
 describe('4bio API', () => {
   const app = createApp();
 
+  it('serve index.html na raiz', async () => {
+    const response = await request(app).get('/');
+    expect(response.status).toBe(200);
+    expect(response.text).toContain('4bio | Sistema Interno');
+  });
+
   it('autentica usuário válido', async () => {
     const response = await request(app).post('/api/login').send({ employeeCode: '4B-101', password: 'operador123' });
     expect(response.status).toBe(200);
