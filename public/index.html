@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>4bio | Sistema Interno</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>4bio | Sistema Interno de Vendas</h1>
+      <div id="quick-actions">
+        <button data-tab="pedidos">Pedidos</button>
+        <button data-tab="entregas">Entrega</button>
+        <button data-tab="atendimento">Atendimento</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="auth-section" class="card">
+        <h2>Login</h2>
+        <form id="login-form">
+          <input name="employeeCode" placeholder="Código interno (ex: 4B-101)" required />
+          <input name="password" type="password" placeholder="Senha" required />
+          <button type="submit">Entrar</button>
+        </form>
+        <p class="hint">Perfis de teste: admin123 / gerente123 / operador123</p>
+      </section>
+
+      <section id="app-section" class="hidden">
+        <nav>
+          <button class="tab active" data-tab="dashboard">Dashboard</button>
+          <button class="tab" data-tab="catalogo">Catálogo</button>
+          <button class="tab" data-tab="vendas">Vendas</button>
+          <button class="tab" data-tab="pedidos">Histórico</button>
+          <button class="tab" data-tab="entregas">Entregas</button>
+          <button class="tab" data-tab="atendimento">Atendimento</button>
+        </nav>
+
+        <section id="dashboard" class="tab-content active"></section>
+        <section id="catalogo" class="tab-content"></section>
+        <section id="vendas" class="tab-content"></section>
+        <section id="pedidos" class="tab-content"></section>
+        <section id="entregas" class="tab-content"></section>
+        <section id="atendimento" class="tab-content"></section>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
