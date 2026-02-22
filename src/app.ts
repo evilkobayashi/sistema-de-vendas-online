@@ -48,8 +48,9 @@ const medicineCreateSchema = z.object({
   price: z.coerce.number().positive(),
   lab: z.string().min(2),
   specialty: z.string().min(2),
+  description: z.string().min(5).max(300),
   controlled: z.coerce.boolean().default(false),
-  image: z.string().url().or(z.literal(''))
+  image: z.string().url().or(z.string().startsWith('data:image/')).or(z.literal(''))
 });
 
 type Session = { user: Omit<User, 'password'>; expiresAt: number };
@@ -174,7 +175,7 @@ export function createApp() {
     return res.json({ items: filtered, specialties: [...new Set(medicines.map((m) => m.specialty))], labs: [...new Set(medicines.map((m) => m.lab))] });
   });
 
-  app.post('/api/medicines', authorize(['admin', 'gerente']), (req, res) => {
+  app.post('/api/medicines', authorize(['admin', 'gerente', 'inventario']), (req, res) => {
     const parsed = medicineCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -184,6 +185,7 @@ export function createApp() {
       price: parsed.data.price,
       lab: parsed.data.lab,
       specialty: parsed.data.specialty,
+      description: parsed.data.description,
       controlled: parsed.data.controlled,
       image: parsed.data.image || 'https://picsum.photos/seed/med-default/320/220'
     };

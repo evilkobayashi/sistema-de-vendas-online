@@ -146,6 +146,7 @@ describe('4bio API', () => {
         price: 99.9,
         lab: 'Lab X',
         specialty: 'Cardiologia',
+        description: 'Descrição criada por operador',
         controlled: false,
         image: 'https://picsum.photos/seed/newmed/320/220'
       });
@@ -159,11 +160,35 @@ describe('4bio API', () => {
         price: 99.9,
         lab: 'Lab X',
         specialty: 'Cardiologia',
+        description: 'Descrição criada por gerente',
         controlled: false,
         image: 'https://picsum.photos/seed/newmed-ok/320/220'
       });
     expect(allowed.status).toBe(201);
     expect(allowed.body.item.image).toContain('https://picsum.photos');
+  });
+
+
+
+  it('permite usuário de inventário adicionar medicamento com descrição e imagem facilitada (data URL)', async () => {
+    const inventarioToken = await loginAs('4B-220', 'inventario123');
+
+    const allowed = await request(app)
+      .post('/api/medicines')
+      .set('Authorization', `Bearer ${inventarioToken}`)
+      .send({
+        name: 'Med Inventário',
+        price: 129.9,
+        lab: 'Lab Estoque',
+        specialty: 'Imunologia',
+        description: 'Descrição cadastrada pelo colaborador de estoque.',
+        controlled: false,
+        image: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO8BqfQAAAAASUVORK5CYII='
+      });
+
+    expect(allowed.status).toBe(201);
+    expect(allowed.body.item.description).toContain('estoque');
+    expect(allowed.body.item.image.startsWith('data:image/')).toBe(true);
   });
 
   it('mantém dados após reinicialização da aplicação (persistência em disco)', async () => {

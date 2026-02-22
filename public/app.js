@@ -5,7 +5,8 @@ const state = {
   orders: [],
   deliveries: [],
   tickets: [],
-  filters: { specialty: '', lab: '' }
+  filters: { specialty: '', lab: '' },
+  medicineImageDataUrl: ''
 };
 
 const byId = (id) => document.getElementById(id);
@@ -104,10 +105,50 @@ async function loadDashboard() {
 }
 
 function renderMedicineImage(medicine) {
-  if (medicine.image?.startsWith('http')) {
+  if (medicine.image?.startsWith('http') || medicine.image?.startsWith('data:image/')) {
     return `<img src="${medicine.image}" alt="${medicine.name}" class="medicine-image" loading="lazy"/>`;
   }
-  return `<div class="medicine-fallback">${medicine.image || '💊'}</div>`;
+  return `<div class="medicine-fallback">💊</div>`;
+}
+
+function attachMedicineImagePicker() {
+  const fileInput = byId('medicine-image-file');
+  const preview = byId('medicine-image-preview');
+  const urlInput = byId('medicine-image-url');
+
+  if (urlInput) {
+    urlInput.addEventListener('input', () => {
+      const value = urlInput.value.trim();
+      if (value) {
+        state.medicineImageDataUrl = '';
+        preview.innerHTML = `<img src="${value}" alt="Preview URL" class="medicine-image"/>`;
+      } else if (!state.medicineImageDataUrl) {
+        preview.innerHTML = '<div class="empty">Sem imagem selecionada</div>';
+      }
+    });
+  }
+
+  if (fileInput) {
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files?.[0];
+      if (!file) {
+        state.medicineImageDataUrl = '';
+        return;
+      }
+      if (!file.type.startsWith('image/')) {
+        alert('Selecione apenas arquivos de imagem.');
+        fileInput.value = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = typeof reader.result === 'string' ? reader.result : '';
+        state.medicineImageDataUrl = result;
+        preview.innerHTML = `<img src="${result}" alt="Preview arquivo" class="medicine-image"/>`;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
 }
 
 async function loadCatalog() {
@@ -117,7 +158,7 @@ async function loadCatalog() {
   const data = await apiFetch(`/api/medicines?${q.toString()}`);
   state.medicines = data.items;
 
-  const canManageMedicines = state.user.role === 'admin' || state.user.role === 'gerente';
+  const canManageMedicines = ['admin', 'gerente', 'inventario'].includes(state.user.role);
 
   byId('catalogo').innerHTML = `
     <h2>Catálogo de medicamentos</h2>
@@ -130,16 +171,19 @@ async function loadCatalog() {
 
     ${canManageMedicines ? `
       <div class="card manager-card">
-        <h3>Adicionar medicamento com imagem</h3>
+        <h3>Adicionar medicamento (Inventário)</h3>
         <form id="medicine-form" class="inline form-modern">
           <input name="name" placeholder="Nome do medicamento" required />
           <input name="price" type="number" step="0.01" min="0.01" placeholder="Preço" required />
           <input name="lab" placeholder="Laboratório" required />
           <input name="specialty" placeholder="Especialidade" required />
-          <input name="image" type="url" placeholder="URL da imagem" />
+          <textarea name="description" placeholder="Descrição do medicamento" rows="2" required></textarea>
+          <input id="medicine-image-url" name="imageUrl" type="url" placeholder="URL da imagem (opcional)" />
+          <label>Ou envie arquivo da imagem<input id="medicine-image-file" name="imageFile" type="file" accept="image/*" /></label>
           <label><input type="checkbox" name="controlled" /> Controlado</label>
           <button type="submit">Adicionar</button>
         </form>
+        <div id="medicine-image-preview" class="preview-box"><div class="empty">Sem imagem selecionada</div></div>
       </div>
     ` : ''}
 
@@ -150,6 +194,7 @@ async function loadCatalog() {
           <h4>${m.name}</h4>
           <p><strong>${money(m.price)}</strong></p>
           <p>${m.lab} • ${m.specialty}</p>
+          <p class="description">${m.description || ''}</p>
           ${m.controlled ? '<span class="tag controlled">Controlado (receita obrigatória)</span>' : '<span class="tag">Não controlado</span>'}
         </article>
       `).join('')}
@@ -169,12 +214,16 @@ async function loadCatalog() {
     loadCatalog();
   });
 
+  if (canManageMedicines) attachMedicineImagePicker();
+
   const medicineForm = byId('medicine-form');
   if (medicineForm) {
     medicineForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       try {
         const f = Object.fromEntries(new FormData(e.target).entries());
+        const image = state.medicineImageDataUrl || f.imageUrl || '';
+
         await apiFetch('/api/medicines', {
           method: 'POST',
           body: JSON.stringify({
@@ -182,10 +231,13 @@ async function loadCatalog() {
             price: Number(f.price),
             lab: f.lab,
             specialty: f.specialty,
-            image: f.image || '',
+            description: f.description,
+            image,
             controlled: Boolean(f.controlled)
           })
         });
+
+        state.medicineImageDataUrl = '';
         alert('Medicamento adicionado com sucesso');
         await loadCatalog();
       } catch (error) {
