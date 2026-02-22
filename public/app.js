@@ -1,7 +1,37 @@
-const state = { user: null, medicines: [], orders: [], deliveries: [], tickets: [], filters: { specialty: '', lab: '' } };
+const state = {
+  token: null,
+  user: null,
+  medicines: [],
+  orders: [],
+  deliveries: [],
+  tickets: [],
+  filters: { specialty: '', lab: '' }
+};
 
 const byId = (id) => document.getElementById(id);
 const money = (v) => `R$ ${Number(v).toFixed(2)}`;
+
+async function apiFetch(url, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (state.token) headers.Authorization = `Bearer ${state.token}`;
+  if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+
+  const response = await fetch(url, { ...options, headers });
+  const contentType = response.headers.get('content-type') || '';
+  const payload = contentType.includes('application/json') ? await response.json() : await response.text();
+
+  if (!response.ok) {
+    const error = typeof payload === 'object' && payload?.error ? payload.error : `Erro HTTP ${response.status}`;
+    if (response.status === 401) {
+      state.token = null;
+      alert('Sessão expirada. Faça login novamente.');
+      location.reload();
+    }
+    throw new Error(error);
+  }
+
+  return payload;
+}
 
 function activateTab(tab) {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
@@ -12,18 +42,21 @@ document.querySelectorAll('.tab').forEach((btn) => btn.addEventListener('click',
 
 byId('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const payload = Object.fromEntries(new FormData(e.target).entries());
-  const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-  const data = await r.json();
-  if (!r.ok) return alert(data.error || 'Falha no login');
+  try {
+    const payload = Object.fromEntries(new FormData(e.target).entries());
+    const data = await apiFetch('/api/login', { method: 'POST', body: JSON.stringify(payload) });
 
-  state.user = data.user;
-  byId('user-badge').textContent = `${state.user.name} • ${state.user.role}`;
-  byId('user-badge').classList.remove('hidden');
-  byId('login-panel').classList.add('hidden');
-  byId('app').classList.remove('hidden');
+    state.token = data.token;
+    state.user = data.user;
+    byId('user-badge').textContent = `${state.user.name} • ${state.user.role}`;
+    byId('user-badge').classList.remove('hidden');
+    byId('login-panel').classList.add('hidden');
+    byId('app').classList.remove('hidden');
 
-  await refreshAll();
+    await refreshAll();
+  } catch (error) {
+    alert(error instanceof Error ? error.message : 'Falha no login');
+  }
 });
 
 async function refreshAll() {
@@ -32,8 +65,7 @@ async function refreshAll() {
 }
 
 async function loadDashboard() {
-  const r = await fetch(`/api/dashboard/${state.user.role}`);
-  const data = await r.json();
+  const data = await apiFetch(`/api/dashboard/${state.user.role}`);
   byId('dashboard').innerHTML = `
     <h2>Dashboard Operacional</h2>
     <div class="kpis">
@@ -60,17 +92,13 @@ async function loadDashboard() {
 
   document.querySelectorAll('[data-confirm-order]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      const r = await fetch(`/api/orders/${btn.dataset.confirmOrder}/recurring/confirm`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: state.user.id })
-      });
-
-      const response = await r.json();
-      if (!r.ok) return alert(response.error || 'Erro ao confirmar recorrência');
-
-      await loadDashboard();
-      alert('Recorrência confirmada com o cliente com sucesso.');
+      try {
+        await apiFetch(`/api/orders/${btn.dataset.confirmOrder}/recurring/confirm`, { method: 'PATCH' });
+        await loadDashboard();
+        alert('Recorrência confirmada com o cliente com sucesso.');
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Erro ao confirmar recorrência');
+      }
     });
   });
 }
@@ -79,8 +107,7 @@ async function loadCatalog() {
   const q = new URLSearchParams();
   if (state.filters.specialty) q.set('specialty', state.filters.specialty);
   if (state.filters.lab) q.set('lab', state.filters.lab);
-  const r = await fetch(`/api/medicines?${q.toString()}`);
-  const data = await r.json();
+  const data = await apiFetch(`/api/medicines?${q.toString()}`);
   state.medicines = data.items;
 
   byId('catalogo').innerHTML = `
@@ -138,33 +165,32 @@ function renderPurchaseForm() {
 
   byId('sale-form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target).entries());
-    const payload = {
-      userId: state.user.id,
-      patientName: f.patientName,
-      email: f.email,
-      phone: f.phone,
-      address: f.address,
-      items: [{ medicineId: f.medicineId, quantity: Number(f.quantity) }],
-      prescriptionCode: f.prescriptionCode || undefined,
-      recurring: f.recurringEnabled && f.nextBillingDate
-        ? { discountPercent: Number(f.discountPercent || 0), nextBillingDate: f.nextBillingDate }
-        : undefined
-    };
+    try {
+      const f = Object.fromEntries(new FormData(e.target).entries());
+      const payload = {
+        patientName: f.patientName,
+        email: f.email,
+        phone: f.phone,
+        address: f.address,
+        items: [{ medicineId: f.medicineId, quantity: Number(f.quantity) }],
+        prescriptionCode: f.prescriptionCode || undefined,
+        recurring: f.recurringEnabled && f.nextBillingDate
+          ? { discountPercent: Number(f.discountPercent || 0), nextBillingDate: f.nextBillingDate }
+          : undefined
+      };
 
-    const r = await fetch('/api/orders', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    const data = await r.json();
-    if (!r.ok) return alert(typeof data.error === 'string' ? data.error : 'Erro ao criar pedido');
-
-    alert(`Pedido ${data.order.id} criado com total ${money(data.order.total)}`);
-    await Promise.all([loadDashboard(), loadOrders(), loadDeliveries()]);
-    e.target.reset();
+      const data = await apiFetch('/api/orders', { method: 'POST', body: JSON.stringify(payload) });
+      alert(`Pedido ${data.order.id} criado com total ${money(data.order.total)}`);
+      await Promise.all([loadDashboard(), loadOrders(), loadDeliveries()]);
+      e.target.reset();
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Erro ao criar pedido');
+    }
   });
 }
 
 async function loadOrders() {
-  const r = await fetch('/api/orders');
-  const data = await r.json();
+  const data = await apiFetch('/api/orders?page=1&pageSize=50');
   state.orders = data.items;
 
   byId('pedidos').innerHTML = `
@@ -179,8 +205,7 @@ async function loadOrders() {
 }
 
 async function loadDeliveries() {
-  const r = await fetch('/api/deliveries');
-  const data = await r.json();
+  const data = await apiFetch('/api/deliveries?page=1&pageSize=50');
   state.deliveries = data.items;
 
   byId('entregas').innerHTML = `
@@ -208,19 +233,21 @@ async function loadDeliveries() {
 
   document.querySelectorAll('[data-did]').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      await fetch(`/api/deliveries/${btn.dataset.did}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: btn.dataset.status })
-      });
-      await Promise.all([loadDeliveries(), loadDashboard()]);
+      try {
+        await apiFetch(`/api/deliveries/${btn.dataset.did}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: btn.dataset.status })
+        });
+        await Promise.all([loadDeliveries(), loadDashboard()]);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Erro ao atualizar entrega');
+      }
     });
   });
 }
 
 async function loadTickets() {
-  const r = await fetch(`/api/tickets/${state.user.id}`);
-  const data = await r.json();
+  const data = await apiFetch(`/api/tickets/${state.user.id}`);
   state.tickets = data.items;
   byId('atendimento').innerHTML = `
     <h2>Atendimento</h2>
