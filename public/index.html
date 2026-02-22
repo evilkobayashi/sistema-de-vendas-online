@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pendências de Recorrência</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 20px; }
+      .high-priority { border-left: 5px solid #d62828; background: #ffe5e5; padding: 8px; margin: 6px 0; }
+      .normal-priority { border-left: 5px solid #3a86ff; background: #eef5ff; padding: 8px; margin: 6px 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Pendências de recorrência</h1>
+    <label>
+      Colaborador:
+      <input id="collaboratorFilter" placeholder="ex: colab-ana" />
+    </label>
+    <label>
+      <input id="priorityFilter" type="checkbox" />
+      Mostrar somente alta prioridade
+    </label>
+    <button id="refreshBtn">Atualizar</button>
+    <div id="pendingList"></div>
+
+    <script type="module" src="/public/app.js"></script>
+  </body>
+</html>
