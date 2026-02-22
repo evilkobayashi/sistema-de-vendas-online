@@ -47,4 +47,32 @@ describe('4bio API', () => {
     const deliveries = await request(app).get('/api/deliveries');
     expect(deliveries.body.items.length).toBeGreaterThan(0);
   });
+
+  it('gera lembrete de recorrência e permite confirmação pelo colaborador', async () => {
+    const create = await request(app).post('/api/orders').send({
+      userId: 'u3',
+      patientName: 'Paciente Recorrente',
+      email: 'recorrente@example.com',
+      phone: '11999999997',
+      address: 'Rua C, 30',
+      items: [{ medicineId: 'm2', quantity: 1 }],
+      recurring: { discountPercent: 5, nextBillingDate: new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10) }
+    });
+
+    expect(create.status).toBe(201);
+
+    const dashboardBefore = await request(app).get('/api/dashboard/operador');
+    const reminder = dashboardBefore.body.reminders.find((x: { orderId: string }) => x.orderId === create.body.order.id);
+    expect(reminder).toBeTruthy();
+
+    const confirm = await request(app)
+      .patch(`/api/orders/${create.body.order.id}/recurring/confirm`)
+      .send({ userId: 'u3' });
+    expect(confirm.status).toBe(200);
+    expect(confirm.body.order.recurring.needsConfirmation).toBe(false);
+
+    const dashboardAfter = await request(app).get('/api/dashboard/operador');
+    const reminderAfter = dashboardAfter.body.reminders.find((x: { orderId: string }) => x.orderId === create.body.order.id);
+    expect(reminderAfter).toBeFalsy();
+  });
 });

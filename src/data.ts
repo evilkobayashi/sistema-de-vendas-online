@@ -34,6 +34,13 @@ export type Order = {
   controlledValidated: boolean;
   createdBy: string;
   createdAt: string;
+  recurring?: {
+    discountPercent: number;
+    nextBillingDate: string;
+    needsConfirmation: boolean;
+    lastConfirmationAt?: string;
+    confirmedBy?: string;
+  };
 };
 
 export type DeliveryStatus = 'pendente' | 'em_rota' | 'entregue';

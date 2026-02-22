@@ -42,9 +42,37 @@ async function loadDashboard() {
       <div class="kpi"><div class="value">${data.indicators.ticketsAbertos}</div><div>Tickets abertos</div></div>
       <div class="kpi"><div class="value">${money(data.indicators.totalSales)}</div><div>Total vendido</div></div>
     </div>
-    <h3>Lembretes de recorrência</h3>
-    ${data.reminders.length ? data.reminders.map((x) => `<div class="card">${x.orderId} • ${x.patientName} — ${x.message}</div>`).join('') : '<div class="empty">Sem lembretes para os próximos 3 dias.</div>'}
+    <h3>Lembretes de recorrência (3 dias antes)</h3>
+    ${data.reminders.length
+      ? data.reminders
+          .map(
+            (x) => `<div class="card">
+              <strong>${x.orderId}</strong> • ${x.patientName}<br/>
+              ${x.message} (faturamento: ${x.nextBillingDate})
+              <div class="inline" style="margin-top:8px">
+                <button data-confirm-order="${x.orderId}" class="quick-btn">Confirmado com o cliente</button>
+              </div>
+            </div>`
+          )
+          .join('')
+      : '<div class="empty">Sem lembretes para os próximos 3 dias.</div>'}
   `;
+
+  document.querySelectorAll('[data-confirm-order]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const r = await fetch(`/api/orders/${btn.dataset.confirmOrder}/recurring/confirm`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: state.user.id })
+      });
+
+      const response = await r.json();
+      if (!r.ok) return alert(response.error || 'Erro ao confirmar recorrência');
+
+      await loadDashboard();
+      alert('Recorrência confirmada com o cliente com sucesso.');
+    });
+  });
 }
 
 async function loadCatalog() {
@@ -100,6 +128,7 @@ function renderPurchaseForm() {
       <select name="medicineId" required>${state.medicines.map((m) => `<option value="${m.id}">${m.name} (${money(m.price)})</option>`)}</select>
       <input name="quantity" type="number" min="1" value="1" required />
       <input name="prescriptionCode" placeholder="Código da receita (se controlado)" />
+      <label><input type="checkbox" name="recurringEnabled" /> Ativar compra por recorrência</label>
       <input name="discountPercent" type="number" min="0" max="100" placeholder="Desconto recorrência (%)" />
       <input name="nextBillingDate" type="date" />
       <button type="submit">Salvar pedido</button>
@@ -118,7 +147,7 @@ function renderPurchaseForm() {
       address: f.address,
       items: [{ medicineId: f.medicineId, quantity: Number(f.quantity) }],
       prescriptionCode: f.prescriptionCode || undefined,
-      recurring: f.nextBillingDate
+      recurring: f.recurringEnabled && f.nextBillingDate
         ? { discountPercent: Number(f.discountPercent || 0), nextBillingDate: f.nextBillingDate }
         : undefined
     };

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { deliveries, medicines, orders, tickets, users, type DeliveryStatus, type Role } from './data.js';
+import { deliveries, medicines, orders, tickets, users, type DeliveryStatus, type Order, type Role } from './data.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,6 +39,29 @@ const deliveryUpdateSchema = z.object({
   forecastDate: z.string().optional(),
   carrier: z.string().optional()
 });
+
+const recurringConfirmSchema = z.object({
+  userId: z.string().min(1)
+});
+
+function getDaysUntil(dateIso: string) {
+  return Math.ceil((new Date(dateIso).getTime() - Date.now()) / (24 * 3600 * 1000));
+}
+
+function buildRecurringReminders(items: Order[]) {
+  return items
+    .filter((o) => {
+      if (!o.recurring?.needsConfirmation) return false;
+      const diffDays = getDaysUntil(o.recurring.nextBillingDate);
+      return diffDays >= 0 && diffDays <= 3;
+    })
+    .map((o) => ({
+      orderId: o.id,
+      patientName: o.patientName,
+      nextBillingDate: o.recurring?.nextBillingDate,
+      message: 'Confirmar junto ao cliente a recorrência da compra'
+    }));
+}
 
 export function createApp() {
   const app = express();
@@ -103,7 +126,7 @@ export function createApp() {
     const total = Number((totalBruto - discount).toFixed(2));
 
     const orderId = `P-${new Date().getFullYear()}-${String(orders.length + 1).padStart(3, '0')}`;
-    const order = {
+    const order: Order = {
       id: orderId,
       patientName: parsed.data.patientName,
       email: parsed.data.email,
@@ -114,7 +137,12 @@ export function createApp() {
       controlledValidated: hasControlled,
       createdBy: parsed.data.userId,
       createdAt: new Date().toISOString(),
-      recurring
+      recurring: recurring
+        ? {
+            ...recurring,
+            needsConfirmation: true
+          }
+        : undefined
     };
 
     orders.unshift(order);
@@ -130,6 +158,21 @@ export function createApp() {
   });
 
   app.get('/api/orders', (_, res) => res.json({ items: orders }));
+
+  app.patch('/api/orders/:orderId/recurring/confirm', (req, res) => {
+    const parsed = recurringConfirmSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const order = orders.find((o) => o.id === req.params.orderId);
+    if (!order) return res.status(404).json({ error: 'Pedido não encontrado' });
+    if (!order.recurring) return res.status(400).json({ error: 'Pedido não possui recorrência ativa' });
+
+    order.recurring.needsConfirmation = false;
+    order.recurring.lastConfirmationAt = new Date().toISOString();
+    order.recurring.confirmedBy = parsed.data.userId;
+
+    return res.json({ order });
+  });
 
   app.get('/api/deliveries', (req, res) => {
     const status = req.query.status?.toString() as DeliveryStatus | undefined;
@@ -159,14 +202,7 @@ export function createApp() {
   app.get('/api/dashboard/:role', (req, res) => {
     const role = req.params.role as Role;
     const totalSales = orders.reduce((acc, order) => acc + order.total, 0);
-    const reminders = orders
-      .filter((o) => {
-        const recurring = (o as { recurring?: { nextBillingDate: string } }).recurring;
-        if (!recurring) return false;
-        const diffDays = Math.ceil((new Date(recurring.nextBillingDate).getTime() - Date.now()) / (24 * 3600 * 1000));
-        return diffDays <= 3;
-      })
-      .map((o) => ({ orderId: o.id, patientName: o.patientName, message: 'Confirmar faturamento em até 3 dias' }));
+    const reminders = buildRecurringReminders(orders);
 
     return res.json({
       role,
