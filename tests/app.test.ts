@@ -35,6 +35,16 @@ describe('4bio API', () => {
     expect(typeof response.body.token).toBe('string');
   });
 
+  it('autentica perfil de inventário com normalização de código', async () => {
+    const response = await request(app)
+      .post('/api/login')
+      .send({ employeeCode: ' 4b-220 ', password: 'inventario123' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.user.role).toBe('inventario');
+    expect(typeof response.body.token).toBe('string');
+  });
+
   it('bloqueia venda controlada sem receita', async () => {
     const token = await loginAs();
     const response = await request(app)

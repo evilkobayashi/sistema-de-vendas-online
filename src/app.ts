@@ -142,7 +142,12 @@ export function createApp() {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Payload inválido' });
 
-    const user = users.find((u) => u.employeeCode === parsed.data.employeeCode && u.password === parsed.data.password);
+    const employeeCodeNormalized = parsed.data.employeeCode.trim().toUpperCase();
+    const passwordNormalized = parsed.data.password.trim();
+
+    const user = users.find(
+      (u) => u.employeeCode.trim().toUpperCase() === employeeCodeNormalized && u.password === passwordNormalized
+    );
     if (!user) return res.status(401).json({ error: 'Credenciais inválidas' });
 
     const token = createToken();
