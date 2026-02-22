@@ -27,7 +27,7 @@ async function apiFetch(url, options = {}) {
       alert('Sessão expirada. Faça login novamente.');
       location.reload();
     }
-    throw new Error(error);
+    throw new Error(typeof error === 'string' ? error : JSON.stringify(error));
   }
 
   return payload;
@@ -65,7 +65,7 @@ async function refreshAll() {
 }
 
 async function loadDashboard() {
-  const data = await apiFetch(`/api/dashboard/${state.user.role}`);
+  const data = await apiFetch('/api/dashboard');
   byId('dashboard').innerHTML = `
     <h2>Dashboard Operacional</h2>
     <div class="kpis">
@@ -78,7 +78,7 @@ async function loadDashboard() {
     ${data.reminders.length
       ? data.reminders
           .map(
-            (x) => `<div class="card">
+            (x) => `<div class="card reminder">
               <strong>${x.orderId}</strong> • ${x.patientName}<br/>
               ${x.message} (faturamento: ${x.nextBillingDate})
               <div class="inline" style="margin-top:8px">
@@ -103,12 +103,21 @@ async function loadDashboard() {
   });
 }
 
+function renderMedicineImage(medicine) {
+  if (medicine.image?.startsWith('http')) {
+    return `<img src="${medicine.image}" alt="${medicine.name}" class="medicine-image" loading="lazy"/>`;
+  }
+  return `<div class="medicine-fallback">${medicine.image || '💊'}</div>`;
+}
+
 async function loadCatalog() {
   const q = new URLSearchParams();
   if (state.filters.specialty) q.set('specialty', state.filters.specialty);
   if (state.filters.lab) q.set('lab', state.filters.lab);
   const data = await apiFetch(`/api/medicines?${q.toString()}`);
   state.medicines = data.items;
+
+  const canManageMedicines = state.user.role === 'admin' || state.user.role === 'gerente';
 
   byId('catalogo').innerHTML = `
     <h2>Catálogo de medicamentos</h2>
@@ -118,13 +127,30 @@ async function loadCatalog() {
       <button type="submit">Filtrar</button>
       <button type="button" id="clear-filters" class="quick-btn">Limpar</button>
     </form>
+
+    ${canManageMedicines ? `
+      <div class="card manager-card">
+        <h3>Adicionar medicamento com imagem</h3>
+        <form id="medicine-form" class="inline form-modern">
+          <input name="name" placeholder="Nome do medicamento" required />
+          <input name="price" type="number" step="0.01" min="0.01" placeholder="Preço" required />
+          <input name="lab" placeholder="Laboratório" required />
+          <input name="specialty" placeholder="Especialidade" required />
+          <input name="image" type="url" placeholder="URL da imagem" />
+          <label><input type="checkbox" name="controlled" /> Controlado</label>
+          <button type="submit">Adicionar</button>
+        </form>
+      </div>
+    ` : ''}
+
     <div class="grid">
       ${state.medicines.map((m) => `
-        <article class="card">
-          <h4>${m.image} ${m.name}</h4>
+        <article class="card medicine-card">
+          ${renderMedicineImage(m)}
+          <h4>${m.name}</h4>
           <p><strong>${money(m.price)}</strong></p>
           <p>${m.lab} • ${m.specialty}</p>
-          ${m.controlled ? '<span class="tag">Controlado (receita obrigatória)</span>' : '<span class="tag">Não controlado</span>'}
+          ${m.controlled ? '<span class="tag controlled">Controlado (receita obrigatória)</span>' : '<span class="tag">Não controlado</span>'}
         </article>
       `).join('')}
     </div>
@@ -142,12 +168,37 @@ async function loadCatalog() {
     state.filters = { specialty: '', lab: '' };
     loadCatalog();
   });
+
+  const medicineForm = byId('medicine-form');
+  if (medicineForm) {
+    medicineForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const f = Object.fromEntries(new FormData(e.target).entries());
+        await apiFetch('/api/medicines', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: f.name,
+            price: Number(f.price),
+            lab: f.lab,
+            specialty: f.specialty,
+            image: f.image || '',
+            controlled: Boolean(f.controlled)
+          })
+        });
+        alert('Medicamento adicionado com sucesso');
+        await loadCatalog();
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Erro ao adicionar medicamento');
+      }
+    });
+  }
 }
 
 function renderPurchaseForm() {
   byId('nova-venda').innerHTML = `
     <h2>Registrar compra interna</h2>
-    <form id="sale-form">
+    <form id="sale-form" class="form-modern">
       <input name="patientName" placeholder="Nome do paciente" required />
       <input name="email" type="email" placeholder="E-mail" required />
       <input name="phone" placeholder="Telefone" required />
@@ -204,6 +255,28 @@ async function loadOrders() {
   `;
 }
 
+function deliveryEditForm(delivery) {
+  return `
+    <tr class="delivery-edit-row">
+      <td colspan="5">
+        <form class="inline delivery-edit" data-edit-form="${delivery.orderId}">
+          <select name="status">
+            <option value="pendente" ${delivery.status === 'pendente' ? 'selected' : ''}>Pendente</option>
+            <option value="em_rota" ${delivery.status === 'em_rota' ? 'selected' : ''}>Em rota</option>
+            <option value="entregue" ${delivery.status === 'entregue' ? 'selected' : ''}>Entregue</option>
+          </select>
+          <input name="forecastDate" type="date" value="${delivery.forecastDate}" />
+          <input name="carrier" placeholder="Transportadora" value="${delivery.carrier}" />
+          <button type="submit">Salvar edição</button>
+          <button type="button" class="quick-btn" data-cancel-edit="${delivery.orderId}">Cancelar</button>
+        </form>
+      </td>
+    </tr>
+  `;
+}
+
+let editingDeliveryId = null;
+
 async function loadDeliveries() {
   const data = await apiFetch('/api/deliveries?page=1&pageSize=50');
   state.deliveries = data.items;
@@ -223,8 +296,10 @@ async function loadDeliveries() {
               <td class="inline">
                 <button data-did="${d.orderId}" data-status="em_rota" class="quick-btn">Em rota</button>
                 <button data-did="${d.orderId}" data-status="entregue" class="quick-btn">Entregue</button>
+                <button data-edit-delivery="${d.orderId}">Editar</button>
               </td>
             </tr>
+            ${editingDeliveryId === d.orderId ? deliveryEditForm(d) : ''}
           `).join('')}
         </tbody>
       </table>
@@ -234,13 +309,39 @@ async function loadDeliveries() {
   document.querySelectorAll('[data-did]').forEach((btn) => {
     btn.addEventListener('click', async () => {
       try {
-        await apiFetch(`/api/deliveries/${btn.dataset.did}`, {
-          method: 'PATCH',
-          body: JSON.stringify({ status: btn.dataset.status })
-        });
+        await apiFetch(`/api/deliveries/${btn.dataset.did}`, { method: 'PATCH', body: JSON.stringify({ status: btn.dataset.status }) });
         await Promise.all([loadDeliveries(), loadDashboard()]);
       } catch (error) {
         alert(error instanceof Error ? error.message : 'Erro ao atualizar entrega');
+      }
+    });
+  });
+
+  document.querySelectorAll('[data-edit-delivery]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      editingDeliveryId = btn.dataset.editDelivery;
+      loadDeliveries();
+    });
+  });
+
+  document.querySelectorAll('[data-cancel-edit]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      editingDeliveryId = null;
+      loadDeliveries();
+    });
+  });
+
+  document.querySelectorAll('[data-edit-form]').forEach((form) => {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const orderId = form.getAttribute('data-edit-form');
+        const f = Object.fromEntries(new FormData(form).entries());
+        await apiFetch(`/api/deliveries/${orderId}`, { method: 'PATCH', body: JSON.stringify(f) });
+        editingDeliveryId = null;
+        await Promise.all([loadDeliveries(), loadDashboard()]);
+      } catch (error) {
+        alert(error instanceof Error ? error.message : 'Erro ao salvar edição da entrega');
       }
     });
   });

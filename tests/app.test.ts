@@ -127,4 +127,36 @@ describe('4bio API', () => {
       .send({ status: 'em_rota' });
     expect(allowed.status).toBe(200);
   });
+
+  it('permite gerente adicionar medicamento com imagem e bloqueia operador', async () => {
+    const operadorToken = await loginAs('4B-101', 'operador123');
+    const gerenteToken = await loginAs('4B-014', 'gerente123');
+
+    const blocked = await request(app)
+      .post('/api/medicines')
+      .set('Authorization', `Bearer ${operadorToken}`)
+      .send({
+        name: 'Novo Med Operador',
+        price: 99.9,
+        lab: 'Lab X',
+        specialty: 'Cardiologia',
+        controlled: false,
+        image: 'https://picsum.photos/seed/newmed/320/220'
+      });
+    expect(blocked.status).toBe(403);
+
+    const allowed = await request(app)
+      .post('/api/medicines')
+      .set('Authorization', `Bearer ${gerenteToken}`)
+      .send({
+        name: 'Novo Med Gerente',
+        price: 99.9,
+        lab: 'Lab X',
+        specialty: 'Cardiologia',
+        controlled: false,
+        image: 'https://picsum.photos/seed/newmed-ok/320/220'
+      });
+    expect(allowed.status).toBe(201);
+    expect(allowed.body.item.image).toContain('https://picsum.photos');
+  });
 });

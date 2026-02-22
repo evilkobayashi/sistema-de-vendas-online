@@ -42,6 +42,14 @@ const deliveryUpdateSchema = z.object({
 
 const loginSchema = z.object({ employeeCode: z.string(), password: z.string() });
 const paginationSchema = z.object({ page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20) });
+const medicineCreateSchema = z.object({
+  name: z.string().min(3),
+  price: z.coerce.number().positive(),
+  lab: z.string().min(2),
+  specialty: z.string().min(2),
+  controlled: z.coerce.boolean().default(false),
+  image: z.string().url().or(z.literal(''))
+});
 
 type Session = { user: Omit<User, 'password'>; expiresAt: number };
 const sessions = new Map<string, Session>();
@@ -162,6 +170,24 @@ export function createApp() {
     res.setHeader('ETag', `W/"meds-${filtered.length}"`);
 
     return res.json({ items: filtered, specialties: [...new Set(medicines.map((m) => m.specialty))], labs: [...new Set(medicines.map((m) => m.lab))] });
+  });
+
+  app.post('/api/medicines', authorize(['admin', 'gerente']), (req, res) => {
+    const parsed = medicineCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const newMedicine = {
+      id: `m${medicines.length + 1}`,
+      name: parsed.data.name,
+      price: parsed.data.price,
+      lab: parsed.data.lab,
+      specialty: parsed.data.specialty,
+      controlled: parsed.data.controlled,
+      image: parsed.data.image || 'https://picsum.photos/seed/med-default/320/220'
+    };
+
+    medicines.unshift(newMedicine);
+    return res.status(201).json({ item: newMedicine });
   });
 
   app.post('/api/orders', (req, res) => {

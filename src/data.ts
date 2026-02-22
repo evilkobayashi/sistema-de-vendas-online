@@ -67,10 +67,10 @@ export const users: User[] = [
 ];
 
 export const medicines: Medicine[] = [
-  { id: 'm1', name: 'OncoRelief 20mg', price: 320.5, lab: '4bio Labs', specialty: 'Oncologia', controlled: true, image: '💊' },
-  { id: 'm2', name: 'CardioPlus 10mg', price: 89.9, lab: 'BioHeart', specialty: 'Cardiologia', controlled: false, image: '❤️' },
-  { id: 'm3', name: 'NeuroSafe 5mg', price: 145.0, lab: 'NeuroPharm', specialty: 'Neurologia', controlled: true, image: '🧠' },
-  { id: 'm4', name: 'ImunoCare 50mg', price: 210.0, lab: '4bio Labs', specialty: 'Imunologia', controlled: false, image: '🛡️' }
+  { id: 'm1', name: 'OncoRelief 20mg', price: 320.5, lab: '4bio Labs', specialty: 'Oncologia', controlled: true, image: 'https://picsum.photos/seed/med1/320/220' },
+  { id: 'm2', name: 'CardioPlus 10mg', price: 89.9, lab: 'BioHeart', specialty: 'Cardiologia', controlled: false, image: 'https://picsum.photos/seed/med2/320/220' },
+  { id: 'm3', name: 'NeuroSafe 5mg', price: 145.0, lab: 'NeuroPharm', specialty: 'Neurologia', controlled: true, image: 'https://picsum.photos/seed/med3/320/220' },
+  { id: 'm4', name: 'ImunoCare 50mg', price: 210.0, lab: '4bio Labs', specialty: 'Imunologia', controlled: false, image: 'https://picsum.photos/seed/med4/320/220' }
 ];
 
 export const orders: Order[] = [];
