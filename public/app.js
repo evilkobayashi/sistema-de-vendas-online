@@ -41,6 +41,22 @@ function activateTab(tab) {
 
 document.querySelectorAll('.tab').forEach((btn) => btn.addEventListener('click', () => activateTab(btn.dataset.tab)));
 
+byId('logout-btn').addEventListener('click', async () => {
+  try {
+    await apiFetch('/api/logout', { method: 'POST' });
+  } catch {
+    // mesmo se falhar no servidor, limpa sessão local
+  }
+
+  state.token = null;
+  state.user = null;
+  byId('user-badge').classList.add('hidden');
+  byId('logout-btn').classList.add('hidden');
+  byId('app').classList.add('hidden');
+  byId('login-panel').classList.remove('hidden');
+  byId('login-form').reset();
+});
+
 byId('login-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
@@ -51,6 +67,7 @@ byId('login-form').addEventListener('submit', async (e) => {
     state.user = data.user;
     byId('user-badge').textContent = `${state.user.name} • ${state.user.role}`;
     byId('user-badge').classList.remove('hidden');
+    byId('logout-btn').classList.remove('hidden');
     byId('login-panel').classList.add('hidden');
     byId('app').classList.remove('hidden');
 

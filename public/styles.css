@@ -39,6 +39,16 @@ body {
   font-weight: 600;
   backdrop-filter: blur(2px);
 }
+
+.topbar-actions { display:flex; gap:10px; align-items:center; }
+.logout-btn {
+  background: #ffffff22;
+  color: #fff;
+  border: 1px solid #ffffff55;
+  padding: 8px 14px;
+  border-radius: 999px;
+}
+.logout-btn:hover { background:#ffffff33; box-shadow:none; transform:none; }
 .layout { max-width: 1240px; margin: 26px auto; padding: 0 16px 24px; }
 .panel {
   background: linear-gradient(180deg, #ffffff, #fbfdff);

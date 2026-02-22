@@ -191,6 +191,23 @@ describe('4bio API', () => {
     expect(allowed.body.item.image.startsWith('data:image/')).toBe(true);
   });
 
+
+
+  it('permite logout e invalida sessão do token', async () => {
+    const token = await loginAs();
+
+    const logout = await request(app)
+      .post('/api/logout')
+      .set('Authorization', `Bearer ${token}`)
+      .send({});
+    expect(logout.status).toBe(200);
+
+    const blocked = await request(app)
+      .get('/api/orders')
+      .set('Authorization', `Bearer ${token}`);
+    expect(blocked.status).toBe(401);
+  });
+
   it('mantém dados após reinicialização da aplicação (persistência em disco)', async () => {
     const token = await loginAs();
 
