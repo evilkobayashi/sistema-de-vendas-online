@@ -3,49 +3,98 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>4bio | Sistema Interno</title>
+    <title>4BIO | Catálogo</title>
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <header>
-      <h1>4bio | Sistema Interno de Vendas</h1>
-      <div id="quick-actions">
-        <button data-tab="pedidos">Pedidos</button>
-        <button data-tab="entregas">Entrega</button>
-        <button data-tab="atendimento">Atendimento</button>
+    <header class="topbar">
+      <div class="container topbar-row">
+        <div class="brand">✦ <span>4BIO</span></div>
+        <div class="search">🔍 Encontre seu medicamento pelo princípio ativo ou nome</div>
+        <nav class="quick-menu">
+          <a>Pedidos</a><a>Daltônico</a><a>Fotossensível</a><a>Entrar</a><a>Item</a><a>Menu</a>
+        </nav>
+      </div>
+      <div class="container subnav">
+        <a>Especialidades</a><a>Laboratórios</a><a>Grupo RD</a><a>atendimento</a>
       </div>
     </header>
 
-    <main>
-      <section id="auth-section" class="card">
-        <h2>Login</h2>
-        <form id="login-form">
-          <input name="employeeCode" placeholder="Código interno (ex: 4B-101)" required />
-          <input name="password" type="password" placeholder="Senha" required />
-          <button type="submit">Entrar</button>
-        </form>
-        <p class="hint">Perfis de teste: admin123 / gerente123 / operador123</p>
+    <main class="container page">
+      <section class="hero">
+        <div class="hero-grid">
+          <div class="shape dark"></div>
+          <div class="shape green wide">Duas décadas dedicadas à vida em primeiro lugar.</div>
+          <div class="shape white number">20<br/><small>ANOS</small></div>
+          <div class="shape green"></div>
+          <div class="shape yellow"></div>
+          <div class="shape dark"></div>
+        </div>
       </section>
 
-      <section id="app-section" class="hidden">
-        <nav>
-          <button class="tab active" data-tab="dashboard">Dashboard</button>
-          <button class="tab" data-tab="catalogo">Catálogo</button>
-          <button class="tab" data-tab="vendas">Vendas</button>
-          <button class="tab" data-tab="pedidos">Histórico</button>
-          <button class="tab" data-tab="entregas">Entregas</button>
-          <button class="tab" data-tab="atendimento">Atendimento</button>
-        </nav>
+      <div class="dots"><span></span><span></span><span class="active"></span><span></span><span></span></div>
 
-        <section id="dashboard" class="tab-content active"></section>
-        <section id="catalogo" class="tab-content"></section>
-        <section id="vendas" class="tab-content"></section>
-        <section id="pedidos" class="tab-content"></section>
-        <section id="entregas" class="tab-content"></section>
-        <section id="atendimento" class="tab-content"></section>
+      <section>
+        <h2 class="section-title">Promoções</h2>
+        <div class="products">
+          <article class="product"><b class="badge">36%</b><div class="thumb"></div><h3>Pentasa sache 2g</h3><p class="old">R$ 1327,31</p><p class="price">R$ 846,90</p><button>COMPRAR</button></article>
+          <article class="product"><b class="badge">30%</b><div class="thumb"></div><h3>Mirena evo</h3><p class="old">R$ 1722,87</p><p class="price">R$ 1212,90</p><button>COMPRAR</button></article>
+          <article class="product"><b class="badge">30%</b><div class="thumb"></div><h3>Kyleena diu 19,5mg</h3><p class="old">R$ 1722,87</p><p class="price">R$ 1212,90</p><button>COMPRAR</button></article>
+          <article class="product"><b class="badge">30%</b><div class="thumb"></div><h3>Xeljanz 5mg</h3><p class="old">R$ 7968,07</p><p class="price">R$ 5580,90</p><button>COMPRAR</button></article>
+          <article class="product"><b class="badge">22%</b><div class="thumb"></div><h3>Esbriet 267mg</h3><p class="old">R$ 20062,35</p><p class="price">R$ 15550,96</p><button>COMPRAR</button></article>
+        </div>
+      </section>
+
+      <section>
+        <h2 class="section-title">Laboratórios Parceiros</h2>
+        <p class="subtitle">Conheça os laboratórios que cuidam da sua saúde!</p>
+        <div class="labs"><span>Takeda</span><span>Astellas</span><span>dkt</span><span>janssen</span><span>Libbs</span><span>Roche</span></div>
+      </section>
+
+      <section>
+        <h2 class="section-title">Benefícios 4BIO</h2>
+        <div class="benefits">
+          <div class="benefit dark">Assinatura 4BIO</div>
+          <div class="benefit photo"></div>
+          <div class="benefit yellow">Ação Judicial</div>
+          <div class="benefit photo"></div>
+          <div class="benefit lime">Descarte Consciente</div>
+          <div class="benefit pattern"></div>
+        </div>
+      </section>
+
+      <section>
+        <h2 class="section-title">Especialidades</h2>
+        <div class="specialties">
+          <div class="spec dark">Ginecologia</div><div class="spec image"></div>
+          <div class="spec dark">Infertilidade</div><div class="spec image"></div>
+          <div class="spec dark">Neurologia</div><div class="spec image"></div>
+        </div>
+      </section>
+
+      <section class="iso-banner">
+        <div>
+          <h3>A primeira do segmento certificada pela ISO 9001</h3>
+          <p>Qualidade e segurança comprovada!</p>
+        </div>
       </section>
     </main>
 
+    <section class="newsletter">
+      <h3>Receba as Novidades</h3>
+      <p>Receba em seu e-mail todas as novidades sobre os produtos.</p>
+      <div class="newsletter-form"><input placeholder="Insira seu e-mail"/><button>ASSINAR</button></div>
+    </section>
+
+    <footer class="footer">
+      <div class="container">
+        <h4>Atendimento</h4>
+        <p>Televendas: (11) 3508-2900 • SAC: (11) 3579-2978 • Segunda a sábado das 8h às 14h</p>
+        <div class="branches"><span>+ MATRIZ</span><span>+ FILIAL (PALMAS - TO)</span><span>+ FILIAL (RECIFE - PE)</span><span>+ FILIAL (SALVADOR - BA)</span></div>
+      </div>
+    </footer>
+
+    <a class="whatsapp">🟢</a>
     <script type="module" src="/app.js"></script>
   </body>
 </html>

@@ -8,7 +8,7 @@ describe('4bio API', () => {
   it('serve index.html na raiz', async () => {
     const response = await request(app).get('/');
     expect(response.status).toBe(200);
-    expect(response.text).toContain('4bio | Sistema Interno');
+    expect(response.text).toContain('4BIO | Catálogo');
   });
 
   it('autentica usuário válido', async () => {
