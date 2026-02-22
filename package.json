@@ -1,0 +1,12 @@
+{
+  "name": "sistema-de-vendas-online",
+  "version": "1.0.0",
+  "description": "Recorrência e notificações",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "job:recurrence": "node src/worker.js",
+    "test": "node --test"
+  }
+}
