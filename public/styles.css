@@ -1,0 +1,105 @@
+:root {
+  --border: #d0d7de;
+  --accent: #0969da;
+  --active-bg: #eef6ff;
+  --active-border: #6aa9ff;
+  --error: #cf222e;
+  --ok-bg: #dafbe1;
+  --ok-text: #116329;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f6f8fa;
+  color: #1f2328;
+}
+
+.container {
+  max-width: 680px;
+  margin: 32px auto;
+  padding: 24px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+form {
+  display: grid;
+  gap: 10px;
+}
+
+input[type='text'],
+input[type='number'],
+input[type='date'] {
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recurring-block {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  transition: all 0.2s ease;
+}
+
+.recurring-block.active {
+  border-color: var(--active-border);
+  background: var(--active-bg);
+  box-shadow: inset 0 0 0 1px #bfdcff;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+button {
+  border: 1px solid #1f2328;
+  border-radius: 8px;
+  background: #fff;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #f3f4f6;
+}
+
+.summary,
+.confirmation {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.confirmation {
+  background: var(--ok-bg);
+  color: var(--ok-text);
+  border-color: #4ac26b;
+}
+
+.helper {
+  font-size: 0.85rem;
+  margin: 0;
+  color: #57606a;
+}
+
+.error {
+  color: var(--error);
+  font-size: 0.9rem;
+}
+
+.hidden {
+  display: none;
+}
