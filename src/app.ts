@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { deliveries, medicines, orders, tickets, users, type DeliveryStatus, type Order, type Role, type User } from './data.js';
+import { loadPersistentState, persistState } from './store.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -131,6 +132,7 @@ export function createApp() {
   const app = express();
   app.use(express.json());
   const publicDir = resolvePublicDir();
+  loadPersistentState();
 
   app.get('/health/live', (_, res) => res.json({ status: 'ok' }));
   app.get('/health/ready', (_, res) => res.json({ status: 'ready', sessions: sessions.size }));
@@ -187,6 +189,7 @@ export function createApp() {
     };
 
     medicines.unshift(newMedicine);
+    persistState();
     return res.status(201).json({ item: newMedicine });
   });
 
@@ -244,6 +247,7 @@ export function createApp() {
       carrier: 'Transportadora Interna'
     });
 
+    persistState();
     return res.status(201).json({ order });
   });
 
@@ -262,6 +266,7 @@ export function createApp() {
     order.recurring.needsConfirmation = false;
     order.recurring.lastConfirmationAt = new Date().toISOString();
     order.recurring.confirmedBy = authUser.id;
+    persistState();
 
     return res.json({ order });
   });
@@ -287,6 +292,7 @@ export function createApp() {
     if (!target) return res.status(404).json({ error: 'Entrega não encontrada' });
 
     Object.assign(target, parsed.data);
+    persistState();
     return res.json({ item: target });
   });
 

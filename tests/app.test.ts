@@ -1,6 +1,12 @@
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
 import { createApp } from '../src/app.js';
+
+const testStoreDir = fs.mkdtempSync(path.join(os.tmpdir(), '4bio-store-'));
+process.env.RUNTIME_STORE_DIR = testStoreDir;
 
 describe('4bio API', () => {
   const app = createApp();
@@ -158,5 +164,32 @@ describe('4bio API', () => {
       });
     expect(allowed.status).toBe(201);
     expect(allowed.body.item.image).toContain('https://picsum.photos');
+  });
+
+  it('mantém dados após reinicialização da aplicação (persistência em disco)', async () => {
+    const token = await loginAs();
+
+    const created = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        patientName: 'Paciente Persistente',
+        email: 'persistente@example.com',
+        phone: '11999999994',
+        address: 'Rua Persistência, 50',
+        items: [{ medicineId: 'm2', quantity: 1 }]
+      });
+    expect(created.status).toBe(201);
+
+    const appRestarted = createApp();
+    const relogin = await request(appRestarted).post('/api/login').send({ employeeCode: '4B-101', password: 'operador123' });
+    const restartedToken = relogin.body.token;
+
+    const ordersAfterRestart = await request(appRestarted)
+      .get('/api/orders?page=1&pageSize=100')
+      .set('Authorization', `Bearer ${restartedToken}`);
+
+    const found = ordersAfterRestart.body.items.find((o: { id: string }) => o.id === created.body.order.id);
+    expect(found).toBeTruthy();
   });
 });
