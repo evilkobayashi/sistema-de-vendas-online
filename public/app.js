@@ -1,4 +1,4 @@
-const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', doctors: [], selectedDoctorId: '', doctorsView: 'menu', catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
+const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', doctors: [], selectedDoctorId: '', doctorsView: 'menu', employees: [], suppliers: [], finishedProducts: [], rawMaterials: [], standardFormulas: [], packagingFormulas: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
 const byId = (id) => document.getElementById(id);
 const money = (v) => `R$ ${Number(v).toFixed(2)}`;
 const ensureArray = (v) => (Array.isArray(v) ? v : []);
@@ -63,10 +63,11 @@ byId('login-form').addEventListener('submit', async (e) => {
 });
 
 async function refreshAll() {
-  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers(), loadDoctors()]);
+  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers(), loadDoctors(), loadMasterData()]);
   renderPurchaseForm();
   renderCustomersModule();
   renderDoctorsModule();
+  renderMasterDataModule();
 }
 
 async function loadDashboard() {
@@ -453,6 +454,77 @@ function renderDoctorsModule() {
       }
     });
   }
+}
+
+
+async function loadMasterData() {
+  const [employees, suppliers, finishedProducts, rawMaterials, standardFormulas, packagingFormulas] = await Promise.all([
+    apiFetch('/api/employees'),
+    apiFetch('/api/suppliers'),
+    apiFetch('/api/finished-products'),
+    apiFetch('/api/raw-materials'),
+    apiFetch('/api/standard-formulas'),
+    apiFetch('/api/packaging-formulas')
+  ]);
+
+  state.employees = ensureArray(employees.items);
+  state.suppliers = ensureArray(suppliers.items);
+  state.finishedProducts = ensureArray(finishedProducts.items);
+  state.rawMaterials = ensureArray(rawMaterials.items);
+  state.standardFormulas = ensureArray(standardFormulas.items);
+  state.packagingFormulas = ensureArray(packagingFormulas.items);
+}
+
+function renderMasterDataModule() {
+  const el = byId('cadastros');
+  if (!el) return;
+
+  el.innerHTML = `
+    <h2>Cadastros Mestres</h2>
+    <div class="kpis">
+      <div class="kpi"><div class="value">${state.customers.length}</div><div>Clientes</div></div>
+      <div class="kpi"><div class="value">${state.doctors.length}</div><div>Médicos</div></div>
+      <div class="kpi"><div class="value">${state.employees.length}</div><div>Funcionários</div></div>
+      <div class="kpi"><div class="value">${state.suppliers.length}</div><div>Fornecedores</div></div>
+      <div class="kpi"><div class="value">${state.finishedProducts.length}</div><div>Produtos acabados/revenda</div></div>
+      <div class="kpi"><div class="value">${state.rawMaterials.length}</div><div>Matérias-primas</div></div>
+      <div class="kpi"><div class="value">${state.standardFormulas.length}</div><div>Fórmulas padrão</div></div>
+      <div class="kpi"><div class="value">${state.packagingFormulas.length}</div><div>Fórmulas embalagem</div></div>
+    </div>
+    <div class="grid-form" style="grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 16px; margin-top: 16px;">
+      <form id="employee-form" class="grid-form card"><h3>Cadastro de Funcionários</h3><input name="name" placeholder="Nome" required/><input name="role" placeholder="Função" required/><input name="employeeCode" placeholder="Código" required/><input name="email" type="email" placeholder="E-mail" required/><input name="phone" placeholder="Telefone" required/><button type="submit">Salvar funcionário</button></form>
+      <form id="supplier-form" class="grid-form card"><h3>Cadastro de Fornecedores</h3><input name="name" placeholder="Nome" required/><input name="document" placeholder="CNPJ/Documento" required/><input name="email" type="email" placeholder="E-mail" required/><input name="phone" placeholder="Telefone" required/><input name="category" placeholder="Categoria" required/><button type="submit">Salvar fornecedor</button></form>
+      <form id="finished-product-form" class="grid-form card"><h3>Produtos Acabados e Revenda</h3><input name="name" placeholder="Nome" required/><select name="productType"><option value="acabado">Acabado</option><option value="revenda">Revenda</option></select><input name="sku" placeholder="SKU" required/><input name="unit" placeholder="Unidade" required/><input name="price" type="number" step="0.01" min="0.01" placeholder="Preço" required/><button type="submit">Salvar produto</button></form>
+      <form id="raw-material-form" class="grid-form card"><h3>Cadastro de Matéria-prima</h3><input name="name" placeholder="Nome" required/><input name="code" placeholder="Código" required/><input name="unit" placeholder="Unidade" required/><input name="cost" type="number" step="0.01" min="0.01" placeholder="Custo" required/><button type="submit">Salvar matéria-prima</button></form>
+      <form id="standard-formula-form" class="grid-form card"><h3>Cadastro de Fórmulas Padrão</h3><input name="name" placeholder="Nome" required/><input name="version" placeholder="Versão" required/><input name="productId" placeholder="ID do produto" required/><input name="instructions" placeholder="Instruções" required/><button type="submit">Salvar fórmula padrão</button></form>
+      <form id="packaging-formula-form" class="grid-form card"><h3>Cadastro de Fórmulas de Embalagem</h3><input name="name" placeholder="Nome" required/><input name="productId" placeholder="ID do produto" required/><input name="packagingType" placeholder="Tipo de embalagem" required/><input name="unitsPerPackage" type="number" min="1" placeholder="Unidades por embalagem" required/><input name="notes" placeholder="Observações" required/><button type="submit">Salvar fórmula embalagem</button></form>
+    </div>
+  `;
+
+  const bindForm = (id, endpoint) => {
+    const form = byId(id);
+    if (!form) return;
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = Object.fromEntries(new FormData(form).entries());
+      try {
+        await apiFetch(endpoint, { method: 'POST', body: JSON.stringify(payload) });
+        form.reset();
+        await loadMasterData();
+        renderMasterDataModule();
+        alert('Cadastro salvo com sucesso.');
+      } catch (error) {
+        alert(error.message || 'Erro ao salvar cadastro');
+      }
+    });
+  };
+
+  bindForm('employee-form', '/api/employees');
+  bindForm('supplier-form', '/api/suppliers');
+  bindForm('finished-product-form', '/api/finished-products');
+  bindForm('raw-material-form', '/api/raw-materials');
+  bindForm('standard-formula-form', '/api/standard-formulas');
+  bindForm('packaging-formula-form', '/api/packaging-formulas');
 }
 
 function renderPurchaseForm() {

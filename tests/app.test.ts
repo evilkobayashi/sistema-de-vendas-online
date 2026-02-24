@@ -140,6 +140,42 @@ describe('4bio internal sales app', () => {
   });
 
 
+
+
+  it('permite cadastrar entidades de cadastros mestres', async () => {
+    const token = await loginAs();
+
+    const employee = await request(app).post('/api/employees').set('Authorization', `Bearer ${token}`).send({
+      name: 'Ana Estoque', role: 'Inventário', employeeCode: 'EMP-900', email: 'ana@empresa.com', phone: '11900001111'
+    });
+    expect(employee.status).toBe(201);
+
+    const supplier = await request(app).post('/api/suppliers').set('Authorization', `Bearer ${token}`).send({
+      name: 'Fornecedor Alfa', document: '12.345.678/0001-99', email: 'contato@alfa.com', phone: '1133334444', category: 'Medicamentos'
+    });
+    expect(supplier.status).toBe(201);
+
+    const finishedProduct = await request(app).post('/api/finished-products').set('Authorization', `Bearer ${token}`).send({
+      name: 'Xarope Pronto', productType: 'acabado', sku: 'SKU-XP-1', unit: 'frasco', price: 25.5
+    });
+    expect(finishedProduct.status).toBe(201);
+
+    const rawMaterial = await request(app).post('/api/raw-materials').set('Authorization', `Bearer ${token}`).send({
+      name: 'Base Glicerinada', code: 'MAT-100', unit: 'L', cost: 18.2
+    });
+    expect(rawMaterial.status).toBe(201);
+
+    const standardFormula = await request(app).post('/api/standard-formulas').set('Authorization', `Bearer ${token}`).send({
+      name: 'Fórmula X', version: 'v1', productId: finishedProduct.body.item.id, instructions: 'Misturar base e ativo por 5 minutos.'
+    });
+    expect(standardFormula.status).toBe(201);
+
+    const packagingFormula = await request(app).post('/api/packaging-formulas').set('Authorization', `Bearer ${token}`).send({
+      name: 'Embalagem X', productId: finishedProduct.body.item.id, packagingType: 'Frasco 120ml', unitsPerPackage: 1, notes: 'Aplicar lacre térmico.'
+    });
+    expect(packagingFormula.status).toBe(201);
+  });
+
   it('permite criar pedido usando customerId cadastrado', async () => {
     const token = await loginAs();
     const createdCustomer = await request(app)

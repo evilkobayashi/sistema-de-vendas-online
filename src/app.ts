@@ -19,7 +19,7 @@ import {
   type User
 } from './data.js';
 import { loadPersistentState, persistState } from './store.js';
-import { createCustomer, createDoctor, getCustomerById, getDoctorById, initDatabase, listCustomers, listDoctors, updateCustomer, updateDoctor } from './database.js';
+import { createCustomer, createDoctor, createEmployee, createFinishedProduct, createPackagingFormula, createRawMaterial, createStandardFormula, createSupplier, getCustomerById, getDoctorById, initDatabase, listCustomers, listDoctors, listEmployees, listFinishedProducts, listPackagingFormulas, listRawMaterials, listStandardFormulas, listSuppliers, updateCustomer, updateDoctor } from './database.js';
 import { createShipmentWithFallback, quoteWithFallback } from './shipping.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -105,6 +105,53 @@ const doctorCreateSchema = z.object({
 });
 
 const doctorUpdateSchema = doctorCreateSchema;
+
+
+const employeeCreateSchema = z.object({
+  name: z.string().min(2),
+  role: z.string().min(2),
+  employeeCode: z.string().min(3),
+  email: z.string().email(),
+  phone: z.string().min(8)
+});
+
+const supplierCreateSchema = z.object({
+  name: z.string().min(2),
+  document: z.string().min(5),
+  email: z.string().email(),
+  phone: z.string().min(8),
+  category: z.string().min(2)
+});
+
+const finishedProductCreateSchema = z.object({
+  name: z.string().min(2),
+  productType: z.enum(['acabado', 'revenda']),
+  sku: z.string().min(3),
+  unit: z.string().min(1),
+  price: z.coerce.number().positive()
+});
+
+const rawMaterialCreateSchema = z.object({
+  name: z.string().min(2),
+  code: z.string().min(3),
+  unit: z.string().min(1),
+  cost: z.coerce.number().positive()
+});
+
+const standardFormulaCreateSchema = z.object({
+  name: z.string().min(2),
+  version: z.string().min(1),
+  productId: z.string().min(2),
+  instructions: z.string().min(5)
+});
+
+const packagingFormulaCreateSchema = z.object({
+  name: z.string().min(2),
+  productId: z.string().min(2),
+  packagingType: z.string().min(2),
+  unitsPerPackage: z.coerce.number().int().positive(),
+  notes: z.string().min(2)
+});
 
 const medicineCreateSchema = z.object({
   name: z.string().min(3),
@@ -445,6 +492,73 @@ export function createApp() {
     const item = updateDoctor(req.params.doctorId, parsed.data);
     if (!item) return res.status(404).json({ error: 'Médico não encontrado' });
     return res.json({ item });
+  });
+
+
+  app.get('/api/employees', (req: Request, res: Response) => {
+    const q = req.query.q?.toString();
+    return res.json({ items: listEmployees(q) });
+  });
+
+  app.post('/api/employees', (req: Request, res: Response) => {
+    const parsed = employeeCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    return res.status(201).json({ item: createEmployee(parsed.data) });
+  });
+
+  app.get('/api/suppliers', (req: Request, res: Response) => {
+    const q = req.query.q?.toString();
+    return res.json({ items: listSuppliers(q) });
+  });
+
+  app.post('/api/suppliers', (req: Request, res: Response) => {
+    const parsed = supplierCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    return res.status(201).json({ item: createSupplier(parsed.data) });
+  });
+
+  app.get('/api/finished-products', (req: Request, res: Response) => {
+    const q = req.query.q?.toString();
+    return res.json({ items: listFinishedProducts(q) });
+  });
+
+  app.post('/api/finished-products', (req: Request, res: Response) => {
+    const parsed = finishedProductCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    return res.status(201).json({ item: createFinishedProduct(parsed.data) });
+  });
+
+  app.get('/api/raw-materials', (req: Request, res: Response) => {
+    const q = req.query.q?.toString();
+    return res.json({ items: listRawMaterials(q) });
+  });
+
+  app.post('/api/raw-materials', (req: Request, res: Response) => {
+    const parsed = rawMaterialCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    return res.status(201).json({ item: createRawMaterial(parsed.data) });
+  });
+
+  app.get('/api/standard-formulas', (req: Request, res: Response) => {
+    const q = req.query.q?.toString();
+    return res.json({ items: listStandardFormulas(q) });
+  });
+
+  app.post('/api/standard-formulas', (req: Request, res: Response) => {
+    const parsed = standardFormulaCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    return res.status(201).json({ item: createStandardFormula(parsed.data) });
+  });
+
+  app.get('/api/packaging-formulas', (req: Request, res: Response) => {
+    const q = req.query.q?.toString();
+    return res.json({ items: listPackagingFormulas(q) });
+  });
+
+  app.post('/api/packaging-formulas', (req: Request, res: Response) => {
+    const parsed = packagingFormulaCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    return res.status(201).json({ item: createPackagingFormula(parsed.data) });
   });
 
   app.post('/api/shipping/quote', (req: Request, res: Response) => {
