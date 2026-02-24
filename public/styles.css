@@ -187,3 +187,9 @@ textarea {
   min-height: 92px;
   resize: vertical;
 }
+
+
+.warning-text {
+  color: #7c2d12;
+  font-size: 12px;
+}

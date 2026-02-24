@@ -102,6 +102,26 @@ describe('4bio internal sales app', () => {
     expect(parsed.body.suggestions.some((x: { name: string }) => x.name.includes('CardioPlus'))).toBe(true);
   });
 
+
+
+  it('interpreta receita enviada por arquivo (pdf base64) e retorna sugestões', async () => {
+    const token = await loginAs();
+    const fakePdfText = Buffer.from('Receita: CardioPlus 10mg 1 comprimido por dia', 'utf8').toString('base64');
+
+    const parsed = await request(app)
+      .post('/api/prescriptions/parse-document')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        filename: 'receita.pdf',
+        mimeType: 'application/pdf',
+        contentBase64: fakePdfText
+      });
+
+    expect(parsed.status).toBe(200);
+    expect(parsed.body.suggestions.length).toBeGreaterThan(0);
+    expect(parsed.body.extractionMethod).toContain('pdf');
+  });
+
   it('calcula previsão de término do medicamento com base no consumo diário', async () => {
     const token = await loginAs();
     const response = await request(app)

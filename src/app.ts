@@ -68,6 +68,12 @@ const prescriptionParseSchema = z.object({
   text: z.string().min(8).max(6000)
 });
 
+const prescriptionDocumentSchema = z.object({
+  filename: z.string().min(3),
+  mimeType: z.string().min(3),
+  contentBase64: z.string().min(16)
+});
+
 const medicineCreateSchema = z.object({
   name: z.string().min(3),
   price: z.coerce.number().positive(),
@@ -151,6 +157,7 @@ function normalizeText(value: string) {
     .trim();
 }
 
+
 function parsePrescriptionToSuggestions(rawText: string) {
   const text = normalizeText(rawText);
   const suggestions = medicines
@@ -183,6 +190,43 @@ function parsePrescriptionToSuggestions(rawText: string) {
     found: suggestions.length > 0
   };
 }
+
+function extractTextFromDocument(contentBase64: string, mimeType: string) {
+  const raw = Buffer.from(contentBase64, 'base64');
+  const utf = raw.toString('utf8');
+  const latin = raw.toString('latin1');
+
+  const decoded = `${utf}\n${latin}`;
+  const extracted = decoded
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  const isPdf = mimeType.includes('pdf');
+  const isImage = mimeType.startsWith('image/');
+
+  if (isPdf) {
+    return {
+      extractedText: extracted,
+      extractionMethod: 'pdf-text-scan',
+      warning: extracted.length < 20 ? 'PDF sem texto legível. Use PDF pesquisável ou informe texto manualmente.' : undefined
+    };
+  }
+
+  if (isImage) {
+    return {
+      extractedText: extracted,
+      extractionMethod: 'image-metadata-scan',
+      warning: 'Leitura de imagem depende de texto incorporado/metadados. Se não houver sugestão, cole o texto da receita.'
+    };
+  }
+
+  return {
+    extractedText: extracted,
+    extractionMethod: 'generic-binary-scan'
+  };
+}
+
 
 function buildRecurringReminders(items: Order[]) {
   return items
@@ -349,6 +393,21 @@ export function createApp() {
 
     const result = parsePrescriptionToSuggestions(parsed.data.text);
     return res.json(result);
+  });
+
+  app.post('/api/prescriptions/parse-document', (req: Request, res: Response) => {
+    const parsed = prescriptionDocumentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const documentResult = extractTextFromDocument(parsed.data.contentBase64, parsed.data.mimeType);
+    const result = parsePrescriptionToSuggestions(documentResult.extractedText);
+
+    return res.json({
+      ...result,
+      extractionMethod: documentResult.extractionMethod,
+      warning: documentResult.warning,
+      filename: parsed.data.filename
+    });
   });
 
   app.get('/api/inventory/summary', (req: Request, res: Response) => {

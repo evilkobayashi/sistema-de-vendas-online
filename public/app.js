@@ -171,6 +171,12 @@ async function loadInventory() {
 }
 
 
+function showPrescriptionParseWarning(message = '') {
+  const el = byId('prescription-parse-warning');
+  if (!el) return;
+  el.textContent = message || '';
+}
+
 function renderPrescriptionSuggestions(suggestions) {
   const box = byId('prescription-suggestions');
   if (!box) return;
@@ -199,9 +205,12 @@ function renderPurchaseForm() {
       <input name="tabletsPerPackage" type="number" min="1" step="1" value="30" placeholder="Comprimidos por caixa"/>
       <input name="prescriptionCode" placeholder="Código da receita (controlados)"/>
       <textarea name="prescriptionText" rows="4" placeholder="Cole aqui o texto do pedido médico para identificar remédios automaticamente"></textarea>
+      <input name="prescriptionFile" id="prescription-file" type="file" accept="application/pdf,image/*" />
       <div class="inline">
-        <button type="button" id="parse-prescription-btn" class="quick-btn">Ler pedido médico</button>
+        <button type="button" id="parse-prescription-btn" class="quick-btn">Ler pedido médico (texto)</button>
+        <button type="button" id="parse-prescription-file-btn" class="quick-btn">Ler receita por imagem/PDF</button>
       </div>
+      <small id="prescription-parse-warning" class="warning-text"></small>
       <div id="prescription-suggestions" class="stack"></div>
       <label><input type="checkbox" name="recurringEnabled"/> Compra recorrente</label>
       <input name="discountPercent" type="number" min="0" max="100" value="5"/>
@@ -218,6 +227,7 @@ function renderPurchaseForm() {
     }
 
     try {
+      showPrescriptionParseWarning('');
       const data = await apiFetch('/api/prescriptions/parse', { method: 'POST', body: JSON.stringify({ text: payload.prescriptionText }) });
       renderPrescriptionSuggestions(data.suggestions);
       const top = ensureArray(data.suggestions)[0];
@@ -226,6 +236,48 @@ function renderPurchaseForm() {
       }
     } catch (error) {
       alert(error.message || 'Erro ao ler pedido médico');
+    }
+  });
+
+
+  byId('parse-prescription-file-btn').addEventListener('click', async () => {
+    const form = byId('sale-form');
+    const input = byId('prescription-file');
+    const file = input?.files?.[0];
+    if (!file) {
+      alert('Selecione uma imagem ou PDF da receita.');
+      return;
+    }
+
+    try {
+      const contentBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || '');
+          const base64 = result.includes(',') ? result.split(',')[1] : result;
+          resolve(base64);
+        };
+        reader.onerror = () => reject(new Error('Falha ao ler arquivo da receita.'));
+        reader.readAsDataURL(file);
+      });
+
+      const data = await apiFetch('/api/prescriptions/parse-document', {
+        method: 'POST',
+        body: JSON.stringify({
+          filename: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          contentBase64
+        })
+      });
+
+      showPrescriptionParseWarning(data.warning || `Arquivo processado: ${data.filename} (${data.extractionMethod})`);
+      renderPrescriptionSuggestions(data.suggestions);
+      const top = ensureArray(data.suggestions)[0];
+      if (top?.medicineId) {
+        form.querySelector('[name="medicineId"]').value = top.medicineId;
+      }
+    } catch (error) {
+      alert(error.message || 'Erro ao ler receita por arquivo');
     }
   });
 
