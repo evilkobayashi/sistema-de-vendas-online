@@ -4,24 +4,29 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { deliveries, medicines, orders, tickets, users, type DeliveryStatus, type Order, type Role, type User } from './data.js';
+import {
+  deliveries,
+  inventoryLots,
+  inventoryMovements,
+  medicines,
+  orders,
+  tickets,
+  users,
+  type DeliveryStatus,
+  type InventoryLot,
+  type Order,
+  type Role,
+  type User
+} from './data.js';
 import { loadPersistentState, persistState } from './store.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 function resolvePublicDir() {
-  const candidates = [
-    path.resolve(process.cwd(), 'public'),
-    path.resolve(__dirname, '../public'),
-    path.resolve(__dirname, '../../public')
-  ];
-
+  const candidates = [path.resolve(process.cwd(), 'public'), path.resolve(__dirname, '../public'), path.resolve(__dirname, '../../public')];
   const found = candidates.find((dir) => fs.existsSync(path.join(dir, 'index.html')));
-  if (!found) {
-    throw new Error('Diretório public não encontrado. Gere os assets ou valide o ambiente de execução.');
-  }
-
+  if (!found) throw new Error('Diretório public não encontrado. Gere os assets ou valide o ambiente de execução.');
   return found;
 }
 
@@ -39,6 +44,15 @@ const deliveryUpdateSchema = z.object({
   status: z.enum(['pendente', 'em_rota', 'entregue']).optional(),
   forecastDate: z.string().optional(),
   carrier: z.string().optional()
+});
+
+const inventoryLotSchema = z.object({
+  medicineId: z.string(),
+  batchCode: z.string().min(3),
+  expiresAt: z.string(),
+  quantity: z.coerce.number().int().positive(),
+  unitCost: z.coerce.number().positive(),
+  supplier: z.string().min(2)
 });
 
 const loginSchema = z.object({ employeeCode: z.string(), password: z.string() });
@@ -94,7 +108,7 @@ function authorize(roles: Role[]) {
   return (req: Request, res: Response, next: NextFunction) => {
     const authUser = getAuthUser(req);
     if (!roles.includes(authUser.role)) return res.status(403).json({ error: 'Sem permissão para esta operação' });
-    next();
+    return next();
   };
 }
 
@@ -129,9 +143,73 @@ function paginate<T>(items: T[], page: number, pageSize: number) {
   };
 }
 
+function availableQuantityByMedicine(medicineId: string) {
+  return inventoryLots
+    .filter((lot) => lot.medicineId === medicineId)
+    .reduce((acc, lot) => acc + Math.max(0, lot.quantity - lot.reserved), 0);
+}
+
+function reserveStockFefo(medicineId: string, quantity: number, orderId: string, userId: string) {
+  const lots = inventoryLots
+    .filter((lot) => lot.medicineId === medicineId && lot.quantity - lot.reserved > 0)
+    .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt));
+
+  let missing = quantity;
+  const changes: Array<{ lot: InventoryLot; delta: number }> = [];
+
+  for (const lot of lots) {
+    if (missing <= 0) break;
+    const free = lot.quantity - lot.reserved;
+    const used = Math.min(free, missing);
+    if (used > 0) {
+      changes.push({ lot, delta: used });
+      missing -= used;
+    }
+  }
+
+  if (missing > 0) {
+    throw new Error(`Estoque insuficiente para ${medicineId}. Faltam ${missing} unidade(s).`);
+  }
+
+  for (const change of changes) {
+    change.lot.reserved += change.delta;
+    inventoryMovements.unshift({
+      id: `mov-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      medicineId,
+      lotId: change.lot.id,
+      type: 'reserva',
+      quantity: change.delta,
+      reason: 'Reserva automática por criação de pedido',
+      relatedOrderId: orderId,
+      createdBy: userId,
+      createdAt: new Date().toISOString()
+    });
+  }
+}
+
+function buildInventorySummary() {
+  const now = Date.now();
+  const items = medicines.map((medicine) => {
+    const lots = inventoryLots.filter((lot) => lot.medicineId === medicine.id);
+    const stockTotal = lots.reduce((acc, lot) => acc + lot.quantity, 0);
+    const stockAvailable = lots.reduce((acc, lot) => acc + Math.max(0, lot.quantity - lot.reserved), 0);
+    const expiresIn30Days = lots.filter((lot) => {
+      const diff = Math.ceil((new Date(lot.expiresAt).getTime() - now) / 86400000);
+      return diff >= 0 && diff <= 30;
+    }).length;
+    return { medicineId: medicine.id, medicineName: medicine.name, stockTotal, stockAvailable, lotCount: lots.length, expiresIn30Days };
+  });
+
+  return {
+    items,
+    critical: items.filter((item) => item.stockAvailable <= 10).length,
+    nearExpiry: items.reduce((acc, item) => acc + item.expiresIn30Days, 0)
+  };
+}
+
 export function createApp() {
   const app = express();
-  app.use(express.json());
+  app.use(express.json({ limit: '2mb' }));
   const publicDir = resolvePublicDir();
   loadPersistentState();
 
@@ -145,9 +223,7 @@ export function createApp() {
     const employeeCodeNormalized = parsed.data.employeeCode.trim().toUpperCase();
     const passwordNormalized = parsed.data.password.trim();
 
-    const user = users.find(
-      (u) => u.employeeCode.trim().toUpperCase() === employeeCodeNormalized && u.password === passwordNormalized
-    );
+    const user = users.find((u) => u.employeeCode.trim().toUpperCase() === employeeCodeNormalized && u.password === passwordNormalized);
     if (!user) return res.status(401).json({ error: 'Credenciais inválidas' });
 
     const token = createToken();
@@ -166,18 +242,15 @@ export function createApp() {
 
   app.use('/api', authRequired);
 
-  app.get('/api/medicines', (req, res) => {
-    const specialty = req.query.specialty?.toString();
-    const lab = req.query.lab?.toString();
-
-    let filtered = medicines;
-    if (specialty) filtered = filtered.filter((m) => m.specialty === specialty);
-    if (lab) filtered = filtered.filter((m) => m.lab === lab);
+  app.get('/api/medicines', (_req, res) => {
+    const summary = buildInventorySummary();
+    const inventoryMap = new Map(summary.items.map((x) => [x.medicineId, x]));
+    const items = medicines.map((med) => ({ ...med, inventory: inventoryMap.get(med.id) }));
 
     res.setHeader('Cache-Control', 'private, max-age=60');
-    res.setHeader('ETag', `W/"meds-${filtered.length}"`);
+    res.setHeader('ETag', `W/"meds-${items.length}"`);
 
-    return res.json({ items: filtered, specialties: [...new Set(medicines.map((m) => m.specialty))], labs: [...new Set(medicines.map((m) => m.lab))] });
+    return res.json({ items, specialties: [...new Set(medicines.map((m) => m.specialty))], labs: [...new Set(medicines.map((m) => m.lab))] });
   });
 
   app.post('/api/medicines', authorize(['admin', 'gerente', 'inventario']), (req, res) => {
@@ -198,6 +271,55 @@ export function createApp() {
     medicines.unshift(newMedicine);
     persistState();
     return res.status(201).json({ item: newMedicine });
+  });
+
+  app.get('/api/inventory/summary', (req, res) => {
+    const pagination = paginationSchema.safeParse(req.query);
+    if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
+    const summary = buildInventorySummary();
+    return res.json({ ...summary, ...paginate(summary.items, pagination.data.page, pagination.data.pageSize) });
+  });
+
+  app.get('/api/inventory/movements', (req, res) => {
+    const pagination = paginationSchema.safeParse(req.query);
+    if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
+    return res.json(paginate(inventoryMovements, pagination.data.page, pagination.data.pageSize));
+  });
+
+  app.post('/api/inventory/lots', authorize(['admin', 'gerente', 'inventario']), (req, res) => {
+    const parsed = inventoryLotSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const authUser = getAuthUser(req);
+
+    const medicine = medicines.find((item) => item.id === parsed.data.medicineId);
+    if (!medicine) return res.status(404).json({ error: 'Medicamento não encontrado para o lote' });
+
+    const newLot: InventoryLot = {
+      id: `lot-${Date.now()}`,
+      medicineId: parsed.data.medicineId,
+      batchCode: parsed.data.batchCode,
+      expiresAt: parsed.data.expiresAt,
+      quantity: parsed.data.quantity,
+      reserved: 0,
+      unitCost: parsed.data.unitCost,
+      supplier: parsed.data.supplier,
+      createdAt: new Date().toISOString()
+    };
+
+    inventoryLots.unshift(newLot);
+    inventoryMovements.unshift({
+      id: `mov-${Date.now()}`,
+      medicineId: newLot.medicineId,
+      lotId: newLot.id,
+      type: 'entrada',
+      quantity: newLot.quantity,
+      reason: `Entrada de lote ${newLot.batchCode}`,
+      createdBy: authUser.id,
+      createdAt: new Date().toISOString()
+    });
+
+    persistState();
+    return res.status(201).json({ item: newLot });
   });
 
   app.post('/api/orders', (req, res) => {
@@ -226,11 +348,25 @@ export function createApp() {
     const hasControlled = validMeds.some((m) => m.controlled);
     if (hasControlled && !prescriptionCode) return res.status(400).json({ error: 'Receita obrigatória para medicamentos controlados.' });
 
+    for (const item of validMeds) {
+      if (availableQuantityByMedicine(item.medicineId) < item.quantity) {
+        return res.status(400).json({ error: `Estoque insuficiente para ${item.medicineName}` });
+      }
+    }
+
     const totalBruto = validMeds.reduce((acc, item) => acc + item.subtotal, 0);
     const discount = recurring ? totalBruto * (recurring.discountPercent / 100) : 0;
     const total = Number((totalBruto - discount).toFixed(2));
 
     const orderId = `P-${new Date().getFullYear()}-${String(orders.length + 1).padStart(3, '0')}`;
+    try {
+      for (const item of validMeds) {
+        reserveStockFefo(item.medicineId, item.quantity, orderId, authUser.id);
+      }
+    } catch (error) {
+      return res.status(400).json({ error: error instanceof Error ? error.message : 'Falha ao reservar estoque' });
+    }
+
     const order: Order = {
       id: orderId,
       patientName: parsed.data.patientName,
@@ -274,7 +410,6 @@ export function createApp() {
     order.recurring.lastConfirmationAt = new Date().toISOString();
     order.recurring.confirmedBy = authUser.id;
     persistState();
-
     return res.json({ order });
   });
 
@@ -315,6 +450,7 @@ export function createApp() {
     const authUser = getAuthUser(req);
     const totalSales = orders.reduce((acc, order) => acc + order.total, 0);
     const reminders = buildRecurringReminders(orders);
+    const summary = buildInventorySummary();
 
     return res.json({
       role: authUser.role,
@@ -322,7 +458,9 @@ export function createApp() {
         pedidos: orders.length,
         entregasPendentes: deliveries.filter((d) => d.status !== 'entregue').length,
         ticketsAbertos: tickets.filter((t) => t.status !== 'fechado').length,
-        totalSales
+        totalSales,
+        estoqueCritico: summary.critical,
+        lotesProximosVencimento: summary.nearExpiry
       },
       reminders
     });

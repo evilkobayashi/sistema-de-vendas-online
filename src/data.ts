@@ -19,6 +19,32 @@ export type Medicine = {
   description: string;
 };
 
+export type InventoryLot = {
+  id: string;
+  medicineId: string;
+  batchCode: string;
+  expiresAt: string;
+  quantity: number;
+  reserved: number;
+  unitCost: number;
+  supplier: string;
+  createdAt: string;
+};
+
+export type InventoryMovementType = 'entrada' | 'reserva' | 'baixa' | 'ajuste';
+
+export type InventoryMovement = {
+  id: string;
+  medicineId: string;
+  lotId?: string;
+  type: InventoryMovementType;
+  quantity: number;
+  reason: string;
+  relatedOrderId?: string;
+  createdBy: string;
+  createdAt: string;
+};
+
 export type OrderItem = {
   medicineId: string;
   quantity: number;
@@ -75,8 +101,18 @@ export const medicines: Medicine[] = [
   { id: 'm4', name: 'ImunoCare 50mg', price: 210.0, lab: '4bio Labs', specialty: 'Imunologia', controlled: false, image: 'https://picsum.photos/seed/med4/320/220', description: 'Tratamento imunológico para protocolos de média complexidade.' }
 ];
 
-export const orders: Order[] = [];
+const baseDate = Date.now();
 
+export const inventoryLots: InventoryLot[] = [
+  { id: 'lot-1', medicineId: 'm1', batchCode: 'ONC-2401', expiresAt: new Date(baseDate + 120 * 86400000).toISOString().slice(0, 10), quantity: 30, reserved: 0, unitCost: 250, supplier: '4bio Labs', createdAt: new Date().toISOString() },
+  { id: 'lot-2', medicineId: 'm2', batchCode: 'CAR-2402', expiresAt: new Date(baseDate + 90 * 86400000).toISOString().slice(0, 10), quantity: 120, reserved: 0, unitCost: 55, supplier: 'BioHeart', createdAt: new Date().toISOString() },
+  { id: 'lot-3', medicineId: 'm3', batchCode: 'NEU-2403', expiresAt: new Date(baseDate + 45 * 86400000).toISOString().slice(0, 10), quantity: 40, reserved: 0, unitCost: 98, supplier: 'NeuroPharm', createdAt: new Date().toISOString() },
+  { id: 'lot-4', medicineId: 'm4', batchCode: 'IMU-2404', expiresAt: new Date(baseDate + 20 * 86400000).toISOString().slice(0, 10), quantity: 15, reserved: 0, unitCost: 130, supplier: '4bio Labs', createdAt: new Date().toISOString() }
+];
+
+export const inventoryMovements: InventoryMovement[] = [];
+
+export const orders: Order[] = [];
 export const deliveries: Delivery[] = [];
 
 export const tickets: Ticket[] = [

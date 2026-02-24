@@ -1,9 +1,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { deliveries, medicines, orders, tickets, type Delivery, type Medicine, type Order, type Ticket } from './data.js';
+import {
+  deliveries,
+  inventoryLots,
+  inventoryMovements,
+  medicines,
+  orders,
+  tickets,
+  type Delivery,
+  type InventoryLot,
+  type InventoryMovement,
+  type Medicine,
+  type Order,
+  type Ticket
+} from './data.js';
 
 type PersistedState = {
   medicines: Medicine[];
+  inventoryLots: InventoryLot[];
+  inventoryMovements: InventoryMovement[];
   orders: Order[];
   deliveries: Delivery[];
   tickets: Ticket[];
@@ -31,6 +46,8 @@ function replaceArrayInPlace<T>(target: T[], source: T[]) {
 function snapshotState(): PersistedState {
   return {
     medicines,
+    inventoryLots,
+    inventoryMovements,
     orders,
     deliveries,
     tickets,
@@ -52,6 +69,8 @@ export function loadPersistentState() {
     const parsed = JSON.parse(raw) as PersistedState;
 
     if (Array.isArray(parsed.medicines)) replaceArrayInPlace(medicines, parsed.medicines);
+    if (Array.isArray(parsed.inventoryLots)) replaceArrayInPlace(inventoryLots, parsed.inventoryLots);
+    if (Array.isArray(parsed.inventoryMovements)) replaceArrayInPlace(inventoryMovements, parsed.inventoryMovements);
     if (Array.isArray(parsed.orders)) replaceArrayInPlace(orders, parsed.orders);
     if (Array.isArray(parsed.deliveries)) replaceArrayInPlace(deliveries, parsed.deliveries);
     if (Array.isArray(parsed.tickets)) replaceArrayInPlace(tickets, parsed.tickets);
