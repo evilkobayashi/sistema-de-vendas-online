@@ -498,6 +498,10 @@ function renderMasterDataModule() {
       <form id="raw-material-form" class="grid-form card"><h3>Cadastro de Matéria-prima</h3><input name="name" placeholder="Nome" required/><input name="code" placeholder="Código" required/><input name="unit" placeholder="Unidade" required/><input name="cost" type="number" step="0.01" min="0.01" placeholder="Custo" required/><button type="submit">Salvar matéria-prima</button></form>
       <form id="standard-formula-form" class="grid-form card"><h3>Cadastro de Fórmulas Padrão</h3><input name="name" placeholder="Nome" required/><input name="version" placeholder="Versão" required/><input name="productId" placeholder="ID do produto" required/><input name="instructions" placeholder="Instruções" required/><button type="submit">Salvar fórmula padrão</button></form>
       <form id="packaging-formula-form" class="grid-form card"><h3>Cadastro de Fórmulas de Embalagem</h3><input name="name" placeholder="Nome" required/><input name="productId" placeholder="ID do produto" required/><input name="packagingType" placeholder="Tipo de embalagem" required/><input name="unitsPerPackage" type="number" min="1" placeholder="Unidades por embalagem" required/><input name="notes" placeholder="Observações" required/><button type="submit">Salvar fórmula embalagem</button></form>
+      <form id="entry-conversion-form" class="grid-form card"><h3>Entrada de Mercadoria (conversão)</h3><select name="medicineId" required>${state.medicines.map((m) => `<option value="${m.id}">${m.name}</option>`).join('')}</select><input name="sourceQuantity" type="number" min="0.01" step="0.01" placeholder="Qtd origem" required/><input name="sourceUnit" placeholder="Unidade origem (ex: caixa)" required/><input name="conversionFactor" type="number" min="0.01" step="0.01" placeholder="Fator conversão" required/><input name="targetUnit" placeholder="Unidade destino (ex: comprimido)" required/><input name="batchCode" placeholder="Lote" required/><input name="expiresAt" type="date" required/><input name="unitCost" type="number" min="0.01" step="0.01" placeholder="Custo unitário" required/><input name="supplier" placeholder="Fornecedor" required/><button type="submit">Lançar entrada convertida</button></form>
+      <form id="entry-nfe-form" class="grid-form card"><h3>Entrada por XML NF-e</h3><textarea name="xml" rows="4" placeholder="Cole o XML da NF-e" required></textarea><input name="supplier" placeholder="Fornecedor" required/><input name="defaultExpiresAt" type="date"/><input name="defaultUnitCost" type="number" min="0.01" step="0.01" placeholder="Custo unitário padrão"/><input name="conversionFactor" type="number" min="0.01" step="0.01" value="1"/><button type="submit">Importar XML NF-e</button></form>
+      <form id="pricing-auto-form" class="grid-form card"><h3>Atualização automática de preço</h3><input name="percent" type="number" step="0.01" placeholder="Percentual (+/-)" required/><input name="specialty" placeholder="Especialidade (opcional)"/><input name="lab" placeholder="Laboratório (opcional)"/><input name="reason" placeholder="Motivo" value="Atualização automática de lista de preço" required/><button type="submit">Aplicar atualização</button></form>
+      <div class="card"><h3>Impressões operacionais</h3><input id="print-order-id" placeholder="ID do pedido (ex: P-2025-001)"/><div class="inline"><button type="button" id="print-labels-btn" class="quick-btn">Imprimir etiquetas</button><button type="button" id="print-quality-btn" class="quick-btn">Imprimir laudo CQ</button></div><pre id="print-output" class="empty">Sem impressão gerada.</pre></div>
     </div>
   `;
 
@@ -525,6 +529,40 @@ function renderMasterDataModule() {
   bindForm('raw-material-form', '/api/raw-materials');
   bindForm('standard-formula-form', '/api/standard-formulas');
   bindForm('packaging-formula-form', '/api/packaging-formulas');
+  bindForm('entry-conversion-form', '/api/inventory/entries');
+  bindForm('entry-nfe-form', '/api/inventory/entries/nfe-xml');
+  bindForm('pricing-auto-form', '/api/pricing/auto-update');
+
+  const labelsBtn = byId('print-labels-btn');
+  const qualityBtn = byId('print-quality-btn');
+  const printOrderInput = byId('print-order-id');
+  const printOutput = byId('print-output');
+
+  if (labelsBtn) {
+    labelsBtn.addEventListener('click', async () => {
+      try {
+        const orderId = (printOrderInput?.value || '').trim();
+        if (!orderId) throw new Error('Informe o ID do pedido para imprimir etiquetas.');
+        const data = await apiFetch(`/api/print/labels/${orderId}`);
+        if (printOutput) printOutput.textContent = data.printableText || 'Etiquetas geradas.';
+      } catch (error) {
+        alert(error.message || 'Erro ao imprimir etiquetas');
+      }
+    });
+  }
+
+  if (qualityBtn) {
+    qualityBtn.addEventListener('click', async () => {
+      try {
+        const orderId = (printOrderInput?.value || '').trim();
+        if (!orderId) throw new Error('Informe o ID do pedido para imprimir laudo.');
+        const data = await apiFetch(`/api/quality/reports/${orderId}`);
+        if (printOutput) printOutput.textContent = data.printableText || 'Laudo gerado.';
+      } catch (error) {
+        alert(error.message || 'Erro ao imprimir laudo de CQ');
+      }
+    });
+  }
 }
 
 function renderPurchaseForm() {

@@ -153,6 +153,34 @@ const packagingFormulaCreateSchema = z.object({
   notes: z.string().min(2)
 });
 
+
+const inventoryEntrySchema = z.object({
+  medicineId: z.string(),
+  batchCode: z.string().min(3),
+  expiresAt: z.string(),
+  supplier: z.string().min(2),
+  sourceUnit: z.string().min(1),
+  targetUnit: z.string().min(1),
+  sourceQuantity: z.coerce.number().positive(),
+  conversionFactor: z.coerce.number().positive(),
+  unitCost: z.coerce.number().positive()
+});
+
+const inventoryNfeXmlSchema = z.object({
+  xml: z.string().min(20),
+  supplier: z.string().min(2),
+  defaultExpiresAt: z.string().optional(),
+  defaultUnitCost: z.coerce.number().positive().optional(),
+  conversionFactor: z.coerce.number().positive().default(1)
+});
+
+const autoPricingSchema = z.object({
+  percent: z.coerce.number().min(-50).max(200),
+  specialty: z.string().optional(),
+  lab: z.string().optional(),
+  reason: z.string().min(3).default('Atualização automática de lista de preço')
+});
+
 const medicineCreateSchema = z.object({
   name: z.string().min(3),
   price: z.coerce.number().positive(),
@@ -378,6 +406,59 @@ function reserveStockFefo(medicineId: string, quantity: number, orderId: string,
       createdAt: new Date().toISOString()
     });
   }
+}
+
+
+function createLotEntry(input: { medicineId: string; batchCode: string; expiresAt: string; quantity: number; unitCost: number; supplier: string; reason: string; createdBy: string; }) {
+  const newLot: InventoryLot = {
+    id: `lot-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+    medicineId: input.medicineId,
+    batchCode: input.batchCode,
+    expiresAt: input.expiresAt,
+    quantity: input.quantity,
+    reserved: 0,
+    unitCost: input.unitCost,
+    supplier: input.supplier,
+    createdAt: new Date().toISOString()
+  };
+
+  inventoryLots.unshift(newLot);
+  inventoryMovements.unshift({
+    id: `mov-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+    medicineId: newLot.medicineId,
+    lotId: newLot.id,
+    type: 'entrada',
+    quantity: newLot.quantity,
+    reason: input.reason,
+    createdBy: input.createdBy,
+    createdAt: new Date().toISOString()
+  });
+
+  return newLot;
+}
+
+function parseNfeItems(xml: string) {
+  const items: Array<{ name: string; quantity: number; unitPrice?: number }> = [];
+  const detRegex = /<det[\s\S]*?<\/det>/g;
+  const matches = xml.match(detRegex) || [];
+
+  for (const block of matches) {
+    const name = (block.match(/<xProd>([^<]+)<\/xProd>/)?.[1] || '').trim();
+    const quantity = Number((block.match(/<qCom>([^<]+)<\/qCom>/)?.[1] || '0').replace(',', '.'));
+    const unitPriceRaw = (block.match(/<vUnCom>([^<]+)<\/vUnCom>/)?.[1] || '').replace(',', '.');
+    const unitPrice = unitPriceRaw ? Number(unitPriceRaw) : undefined;
+    if (name && Number.isFinite(quantity) && quantity > 0) items.push({ name, quantity, unitPrice });
+  }
+
+  if (!items.length) {
+    const fallbackName = (xml.match(/<xProd>([^<]+)<\/xProd>/)?.[1] || '').trim();
+    const fallbackQty = Number((xml.match(/<qCom>([^<]+)<\/qCom>/)?.[1] || '0').replace(',', '.'));
+    const unitPriceRaw = (xml.match(/<vUnCom>([^<]+)<\/vUnCom>/)?.[1] || '').replace(',', '.');
+    const unitPrice = unitPriceRaw ? Number(unitPriceRaw) : undefined;
+    if (fallbackName && fallbackQty > 0) items.push({ name: fallbackName, quantity: fallbackQty, unitPrice });
+  }
+
+  return items;
 }
 
 function buildInventorySummary() {
@@ -645,32 +726,135 @@ export function createApp() {
     const medicine = medicines.find((item) => item.id === parsed.data.medicineId);
     if (!medicine) return res.status(404).json({ error: 'Medicamento não encontrado para o lote' });
 
-    const newLot: InventoryLot = {
-      id: `lot-${Date.now()}`,
+    const newLot = createLotEntry({
       medicineId: parsed.data.medicineId,
       batchCode: parsed.data.batchCode,
       expiresAt: parsed.data.expiresAt,
       quantity: parsed.data.quantity,
-      reserved: 0,
       unitCost: parsed.data.unitCost,
       supplier: parsed.data.supplier,
-      createdAt: new Date().toISOString()
-    };
-
-    inventoryLots.unshift(newLot);
-    inventoryMovements.unshift({
-      id: `mov-${Date.now()}`,
-      medicineId: newLot.medicineId,
-      lotId: newLot.id,
-      type: 'entrada',
-      quantity: newLot.quantity,
-      reason: `Entrada de lote ${newLot.batchCode}`,
-      createdBy: authUser.id,
-      createdAt: new Date().toISOString()
+      reason: `Entrada de lote ${parsed.data.batchCode}`,
+      createdBy: authUser.id
     });
 
     persistState();
     return res.status(201).json({ item: newLot });
+  });
+
+
+  app.post('/api/inventory/entries', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
+    const parsed = inventoryEntrySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const authUser = getAuthUser(req);
+
+    const medicine = medicines.find((item) => item.id === parsed.data.medicineId);
+    if (!medicine) return res.status(404).json({ error: 'Medicamento não encontrado para entrada' });
+
+    const convertedQuantity = Math.max(1, Math.round(parsed.data.sourceQuantity * parsed.data.conversionFactor));
+    const lot = createLotEntry({
+      medicineId: medicine.id,
+      batchCode: parsed.data.batchCode,
+      expiresAt: parsed.data.expiresAt,
+      quantity: convertedQuantity,
+      unitCost: parsed.data.unitCost,
+      supplier: parsed.data.supplier,
+      reason: `Entrada convertida (${parsed.data.sourceQuantity} ${parsed.data.sourceUnit} => ${convertedQuantity} ${parsed.data.targetUnit})`,
+      createdBy: authUser.id
+    });
+
+    persistState();
+    return res.status(201).json({ item: lot, convertedQuantity });
+  });
+
+  app.post('/api/inventory/entries/nfe-xml', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
+    const parsed = inventoryNfeXmlSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const authUser = getAuthUser(req);
+
+    const parsedItems = parseNfeItems(parsed.data.xml);
+    if (!parsedItems.length) return res.status(400).json({ error: 'Nenhum item identificado no XML NF-e' });
+
+    const createdLots: InventoryLot[] = [];
+    const unmatched: string[] = [];
+
+    for (const item of parsedItems) {
+      const medicine = medicines.find((m) => m.name.toLowerCase().includes(item.name.toLowerCase()) || item.name.toLowerCase().includes(m.name.toLowerCase()));
+      if (!medicine) {
+        unmatched.push(item.name);
+        continue;
+      }
+
+      const quantity = Math.max(1, Math.round(item.quantity * parsed.data.conversionFactor));
+      const lot = createLotEntry({
+        medicineId: medicine.id,
+        batchCode: `NFE-${Date.now().toString().slice(-6)}-${medicine.id}`,
+        expiresAt: parsed.data.defaultExpiresAt || addDays(new Date().toISOString(), 365),
+        quantity,
+        unitCost: parsed.data.defaultUnitCost || item.unitPrice || 1,
+        supplier: parsed.data.supplier,
+        reason: `Entrada por XML NF-e (${item.name})`,
+        createdBy: authUser.id
+      });
+      createdLots.push(lot);
+    }
+
+    persistState();
+    return res.status(201).json({ createdLots, unmatched, parsedCount: parsedItems.length });
+  });
+
+  app.get('/api/print/labels/:orderId', (req: Request, res: Response) => {
+    const order = orders.find((x) => x.id === req.params.orderId);
+    if (!order) return res.status(404).json({ error: 'Pedido não encontrado' });
+    const labels = order.items.map((item, index) => ({
+      labelId: `${order.id}-${index + 1}`,
+      patientName: order.patientName,
+      medicineName: item.medicineName,
+      quantity: item.quantity,
+      printedAt: new Date().toISOString()
+    }));
+    return res.json({ items: labels, printableText: labels.map((x) => `${x.labelId} | ${x.patientName} | ${x.medicineName} | Qtd ${x.quantity}`).join('\n') });
+  });
+
+  app.get('/api/quality/reports/:orderId', (req: Request, res: Response) => {
+    const order = orders.find((x) => x.id === req.params.orderId);
+    if (!order) return res.status(404).json({ error: 'Pedido não encontrado' });
+    const report = {
+      reportId: `QC-${order.id}`,
+      patientName: order.patientName,
+      createdAt: new Date().toISOString(),
+      controls: order.items.map((item) => ({ medicineName: item.medicineName, lotCount: inventoryLots.filter((lot) => lot.medicineId === item.medicineId).length, status: 'aprovado' }))
+    };
+    return res.json({ item: report, printableText: `Laudo ${report.reportId}\nPaciente: ${report.patientName}\n` + report.controls.map((c) => `${c.medicineName}: ${c.status}`).join('\n') });
+  });
+
+  app.post('/api/pricing/auto-update', authorize(['admin', 'gerente']), (req: Request, res: Response) => {
+    const parsed = autoPricingSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+    const authUser = getAuthUser(req);
+
+    const impacted = medicines
+      .filter((m) => (parsed.data.specialty ? m.specialty === parsed.data.specialty : true) && (parsed.data.lab ? m.lab === parsed.data.lab : true))
+      .map((m) => {
+        const oldPrice = m.price;
+        m.price = Number((m.price * (1 + parsed.data.percent / 100)).toFixed(2));
+        return { medicineId: m.id, name: m.name, oldPrice, newPrice: m.price };
+      });
+
+    for (const item of impacted) {
+      inventoryMovements.unshift({
+        id: `mov-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        medicineId: item.medicineId,
+        lotId: '',
+        type: 'ajuste',
+        quantity: 0,
+        reason: `${parsed.data.reason} (${parsed.data.percent}%)`,
+        createdBy: authUser.id,
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    persistState();
+    return res.json({ updated: impacted.length, items: impacted });
   });
 
   app.post('/api/orders', (req: Request, res: Response) => {

@@ -142,6 +142,74 @@ describe('4bio internal sales app', () => {
 
 
 
+
+
+  it('processa entrada com conversão, XML NF-e, impressão e atualização automática de preço', async () => {
+    const token = await loginAs('4B-014', 'gerente123');
+
+    const conversion = await request(app)
+      .post('/api/inventory/entries')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        medicineId: 'm2',
+        batchCode: 'CONV-001',
+        expiresAt: '2031-01-01',
+        supplier: 'Fornecedor Conversão',
+        sourceUnit: 'caixa',
+        targetUnit: 'comprimido',
+        sourceQuantity: 2,
+        conversionFactor: 30,
+        unitCost: 1.2
+      });
+
+    expect(conversion.status).toBe(201);
+    expect(conversion.body.convertedQuantity).toBe(60);
+
+    const nfeXml = `<nfeProc><NFe><infNFe><det nItem="1"><prod><xProd>CardioPlus 10mg</xProd><qCom>3</qCom><vUnCom>2.5</vUnCom></prod></det></infNFe></NFe></nfeProc>`;
+    const nfe = await request(app)
+      .post('/api/inventory/entries/nfe-xml')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ xml: nfeXml, supplier: 'Fornecedor XML', conversionFactor: 10 });
+
+    expect(nfe.status).toBe(201);
+    expect(nfe.body.createdLots.length).toBeGreaterThan(0);
+
+    const order = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        patientName: 'Paciente Impressão',
+        email: 'print@example.com',
+        phone: '11922223333',
+        address: 'Rua Impressão, 10',
+        items: [{ medicineId: 'm2', quantity: 1 }]
+      });
+
+    expect(order.status).toBe(201);
+
+    const labels = await request(app)
+      .get(`/api/print/labels/${order.body.order.id}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(labels.status).toBe(200);
+    expect(labels.body.items.length).toBeGreaterThan(0);
+
+    const quality = await request(app)
+      .get(`/api/quality/reports/${order.body.order.id}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(quality.status).toBe(200);
+    expect(String(quality.body.printableText)).toContain('Laudo');
+
+    const autoPrice = await request(app)
+      .post('/api/pricing/auto-update')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ percent: 5, lab: 'BioHeart', reason: 'Reajuste mensal' });
+
+    expect(autoPrice.status).toBe(200);
+    expect(autoPrice.body.updated).toBeGreaterThan(0);
+  });
+
   it('permite cadastrar entidades de cadastros mestres', async () => {
     const token = await loginAs();
 
