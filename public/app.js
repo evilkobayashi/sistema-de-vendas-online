@@ -98,28 +98,59 @@ async function loadInventory() {
       <div class="kpi"><div class="value">${summary.critical}</div><div>Itens críticos</div></div>
       <div class="kpi"><div class="value">${summary.nearExpiry}</div><div>Lotes até 30 dias</div></div>
     </div>
-    ${canManage ? `<form id="lot-form" class="inline grid-form">
-      <select name="medicineId" required>${state.medicines.map((m) => `<option value="${m.id}">${m.name}</option>`)}</select>
-      <input name="batchCode" placeholder="Lote" required />
-      <input name="expiresAt" type="date" required />
-      <input name="quantity" type="number" min="1" placeholder="Qtd" required />
-      <input name="unitCost" type="number" min="0.01" step="0.01" placeholder="Custo unit." required />
-      <input name="supplier" placeholder="Fornecedor" required />
-      <button type="submit">Adicionar lote</button>
-    </form>` : ''}
+    ${canManage ? `
+      <h3>Opção 1: adicionar novo remédio</h3>
+      <form id="medicine-form-stock" class="inline grid-form">
+        <input name="name" placeholder="Nome do remédio" required />
+        <input name="price" type="number" min="0.01" step="0.01" placeholder="Preço" required />
+        <input name="lab" placeholder="Laboratório" required />
+        <input name="specialty" placeholder="Especialidade" required />
+        <input name="description" placeholder="Descrição" required />
+        <input name="image" placeholder="URL da imagem (opcional)" />
+        <label><input type="checkbox" name="controlled" /> Controlado</label>
+        <button type="submit">Adicionar remédio</button>
+      </form>
+
+      <h3>Opção 2: adicionar lote em remédio existente</h3>
+      <form id="lot-form" class="inline grid-form">
+        <select name="medicineId" required>${ensureArray(state.medicines).map((m) => `<option value="${m.id}">${m.name}</option>`).join('')}</select>
+        <input name="batchCode" placeholder="Lote" required />
+        <input name="expiresAt" type="date" required />
+        <input name="quantity" type="number" min="1" placeholder="Qtd" required />
+        <input name="unitCost" type="number" min="0.01" step="0.01" placeholder="Custo unit." required />
+        <input name="supplier" placeholder="Fornecedor" required />
+        <button type="submit">Adicionar lote</button>
+      </form>
+    ` : ''}
     <table class="table"><thead><tr><th>Medicamento</th><th>Disponível</th><th>Total</th><th>Lotes</th><th>Risco venc.</th></tr></thead>
-    <tbody>${ensureArray(summary.items).map((s) => `<tr><td>${s.medicineName}</td><td>${s.stockAvailable}</td><td>${s.stockTotal}</td><td>${s.lotCount}</td><td>${s.expiresIn30Days}</td></tr>`).join('')}</tbody></table>
+    <tbody>${ensureArray(summary.items).map((item) => `<tr><td>${item.medicineName}</td><td>${item.stockAvailable}</td><td>${item.stockTotal}</td><td>${item.lotCount}</td><td>${item.expiresIn30Days}</td></tr>`).join('')}</tbody></table>
   `;
 
-  const form = byId('lot-form');
-  if (form) {
-    form.addEventListener('submit', async (e) => {
+  const medicineForm = byId('medicine-form-stock');
+  if (medicineForm) {
+    medicineForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       try {
-        const payload = Object.fromEntries(new FormData(form).entries());
+        const payload = Object.fromEntries(new FormData(medicineForm).entries());
+        payload.controlled = payload.controlled === 'on';
+        await apiFetch('/api/medicines', { method: 'POST', body: JSON.stringify(payload) });
+        await Promise.all([loadCatalog(), loadInventory(), loadDashboard()]);
+        medicineForm.reset();
+      } catch (error) {
+        alert(error.message || 'Erro ao adicionar remédio');
+      }
+    });
+  }
+
+  const lotForm = byId('lot-form');
+  if (lotForm) {
+    lotForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        const payload = Object.fromEntries(new FormData(lotForm).entries());
         await apiFetch('/api/inventory/lots', { method: 'POST', body: JSON.stringify(payload) });
         await Promise.all([loadInventory(), loadCatalog(), loadDashboard()]);
-        form.reset();
+        lotForm.reset();
       } catch (error) {
         alert(error.message || 'Erro ao adicionar lote');
       }
