@@ -20,6 +20,7 @@ import {
 } from './data.js';
 import { loadPersistentState, persistState } from './store.js';
 import { createCustomer, getCustomerById, initDatabase, listCustomers } from './database.js';
+import { createShipmentWithFallback, quoteWithFallback } from './shipping.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -53,7 +54,10 @@ const saleSchema = z.object({
 const deliveryUpdateSchema = z.object({
   status: z.enum(['pendente', 'em_rota', 'entregue']).optional(),
   forecastDate: z.string().optional(),
-  carrier: z.string().optional()
+  carrier: z.string().optional(),
+  trackingCode: z.string().optional(),
+  shippingProvider: z.string().optional(),
+  syncStatus: z.enum(['ok', 'fallback', 'queued_retry']).optional()
 });
 
 const inventoryLotSchema = z.object({
@@ -75,6 +79,12 @@ const prescriptionDocumentSchema = z.object({
   filename: z.string().min(3),
   mimeType: z.string().min(3),
   contentBase64: z.string().min(16)
+});
+
+const shippingQuoteSchema = z.object({
+  destinationZip: z.string().optional(),
+  weightKg: z.coerce.number().positive().default(0.3),
+  declaredValue: z.coerce.number().nonnegative().default(0)
 });
 
 const customerCreateSchema = z.object({
@@ -381,6 +391,14 @@ export function createApp() {
     return res.status(201).json({ item });
   });
 
+  app.post('/api/shipping/quote', (req: Request, res: Response) => {
+    const parsed = shippingQuoteSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const result = quoteWithFallback(parsed.data);
+    return res.json({ item: result });
+  });
+
   app.get('/api/medicines', (_req: Request, res: Response) => {
     const summary = buildInventorySummary();
     const inventoryMap = new Map(summary.items.map((x) => [x.medicineId, x]));
@@ -556,16 +574,27 @@ export function createApp() {
     };
 
     orders.unshift(order);
+
+    const shipment = createShipmentWithFallback({
+      orderId: order.id,
+      destinationZip: order.address,
+      weightKg: Math.max(0.3, validMeds.reduce((acc, item) => acc + item.quantity * 0.2, 0)),
+      declaredValue: total
+    });
+
     deliveries.unshift({
       orderId: order.id,
       patientName: order.patientName,
       status: 'pendente',
-      forecastDate: new Date(Date.now() + 2 * 24 * 3600 * 1000).toISOString().slice(0, 10),
-      carrier: 'Transportadora Interna'
+      forecastDate: addDays(new Date().toISOString(), shipment.etaDays),
+      carrier: shipment.provider,
+      trackingCode: shipment.trackingCode,
+      shippingProvider: shipment.provider,
+      syncStatus: shipment.syncStatus
     });
 
     persistState();
-    return res.status(201).json({ order });
+    return res.status(201).json({ order, shipment });
   });
 
   app.get('/api/orders', (req: Request, res: Response) => {

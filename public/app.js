@@ -465,7 +465,7 @@ async function loadOrders() {
 async function loadDeliveries() {
   const data = await apiFetch('/api/deliveries?page=1&pageSize=50');
   const deliveryItems = ensureArray(data.items);
-  byId('entregas').innerHTML = `<h2>Central de entregas</h2>${deliveryItems.length ? `<table class="table"><thead><tr><th>Pedido</th><th>Paciente</th><th>Status</th></tr></thead><tbody>${deliveryItems.map((d) => `<tr><td>${d.orderId}</td><td>${d.patientName}</td><td>${d.status}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Sem entregas.</div>'}`;
+  byId('entregas').innerHTML = `<h2>Central de entregas</h2>${deliveryItems.length ? `<table class="table"><thead><tr><th>Pedido</th><th>Paciente</th><th>Status</th><th>Transportadora</th><th>Rastreio</th><th>Sync</th></tr></thead><tbody>${deliveryItems.map((d) => `<tr><td>${d.orderId}</td><td>${d.patientName}</td><td>${d.status}</td><td>${d.shippingProvider || d.carrier || '-'}</td><td>${d.trackingCode || '-'}</td><td>${d.syncStatus || 'ok'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Sem entregas.</div>'}`;
 }
 
 async function loadTickets() {

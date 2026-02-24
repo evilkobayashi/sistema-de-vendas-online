@@ -97,6 +97,52 @@ describe('4bio internal sales app', () => {
     expect(createdOrder.body.order.email).toBe('pedido@example.com');
   });
 
+
+
+  it('aplica fallback de transportadora quando provedor primário falha', async () => {
+    process.env.SHIPPING_FORCE_FAIL = 'primary';
+    const token = await loginAs();
+
+    const createdOrder = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        patientName: 'Paciente Frete',
+        email: 'frete@example.com',
+        phone: '11910000000',
+        address: '01001-000',
+        items: [{ medicineId: 'm2', quantity: 1 }]
+      });
+
+    expect(createdOrder.status).toBe(201);
+    expect(createdOrder.body.shipment.provider).toBe('EcoEntrega');
+    expect(createdOrder.body.shipment.fallbackUsed).toBe(true);
+
+    const deliveries = await request(app)
+      .get('/api/deliveries?page=1&pageSize=50')
+      .set('Authorization', `Bearer ${token}`);
+    expect(deliveries.status).toBe(200);
+    expect(deliveries.body.items[0].trackingCode).toContain('EE-');
+
+    process.env.SHIPPING_FORCE_FAIL = '';
+  });
+
+  it('retorna fallback interno quando todos os provedores falham', async () => {
+    process.env.SHIPPING_FORCE_FAIL = 'all';
+    const token = await loginAs();
+
+    const quote = await request(app)
+      .post('/api/shipping/quote')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ destinationZip: '01001-000', weightKg: 1.2, declaredValue: 200 });
+
+    expect(quote.status).toBe(200);
+    expect(quote.body.item.provider).toBe('Transportadora Interna');
+    expect(quote.body.item.syncStatus).toBe('queued_retry');
+
+    process.env.SHIPPING_FORCE_FAIL = '';
+  });
+
   it('reserva estoque na criação de pedido e bloqueia quando falta saldo', async () => {
     const token = await loginAs();
 

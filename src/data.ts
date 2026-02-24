@@ -82,6 +82,9 @@ export type Delivery = {
   status: DeliveryStatus;
   forecastDate: string;
   carrier: string;
+  trackingCode?: string;
+  shippingProvider?: string;
+  syncStatus?: 'ok' | 'fallback' | 'queued_retry';
 };
 
 export type Ticket = {
