@@ -19,7 +19,7 @@ import {
   type User
 } from './data.js';
 import { loadPersistentState, persistState } from './store.js';
-import { createCustomer, getCustomerById, initDatabase, listCustomers } from './database.js';
+import { createCustomer, getCustomerById, initDatabase, listCustomers, updateCustomer } from './database.js';
 import { createShipmentWithFallback, quoteWithFallback } from './shipping.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -93,6 +93,8 @@ const customerCreateSchema = z.object({
   phone: z.string().min(8),
   address: z.string().min(5)
 });
+
+const customerUpdateSchema = customerCreateSchema;
 
 const medicineCreateSchema = z.object({
   name: z.string().min(3),
@@ -389,6 +391,21 @@ export function createApp() {
 
     const item = createCustomer(parsed.data);
     return res.status(201).json({ item });
+  });
+
+  app.get('/api/customers/:customerId', (req: Request, res: Response) => {
+    const item = getCustomerById(req.params.customerId);
+    if (!item) return res.status(404).json({ error: 'Cliente não encontrado' });
+    return res.json({ item });
+  });
+
+  app.patch('/api/customers/:customerId', (req: Request, res: Response) => {
+    const parsed = customerUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const item = updateCustomer(req.params.customerId, parsed.data);
+    if (!item) return res.status(404).json({ error: 'Cliente não encontrado' });
+    return res.json({ item });
   });
 
   app.post('/api/shipping/quote', (req: Request, res: Response) => {

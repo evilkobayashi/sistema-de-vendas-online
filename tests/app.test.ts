@@ -73,6 +73,32 @@ describe('4bio internal sales app', () => {
     expect(listed.body.items.some((x: { email: string }) => x.email === 'cliente@example.com')).toBe(true);
   });
 
+
+
+  it('edita cliente cadastrado e retorna dados atualizados', async () => {
+    const token = await loginAs();
+
+    const created = await request(app)
+      .post('/api/customers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Cliente Edit', email: 'cliente.edit@example.com', phone: '11933334444', address: 'Rua X, 1' });
+
+    const updated = await request(app)
+      .patch(`/api/customers/${created.body.item.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Cliente Editado', email: 'cliente.editado@example.com', phone: '11955556666', address: 'Rua Y, 2' });
+
+    expect(updated.status).toBe(200);
+    expect(updated.body.item.name).toBe('Cliente Editado');
+
+    const fetched = await request(app)
+      .get(`/api/customers/${created.body.item.id}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(fetched.status).toBe(200);
+    expect(fetched.body.item.email).toBe('cliente.editado@example.com');
+  });
+
   it('permite criar pedido usando customerId cadastrado', async () => {
     const token = await loginAs();
     const createdCustomer = await request(app)

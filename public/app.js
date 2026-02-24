@@ -1,4 +1,4 @@
-const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
+const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
 const byId = (id) => document.getElementById(id);
 const money = (v) => `R$ ${Number(v).toFixed(2)}`;
 const ensureArray = (v) => (Array.isArray(v) ? v : []);
@@ -65,6 +65,7 @@ byId('login-form').addEventListener('submit', async (e) => {
 async function refreshAll() {
   await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers()]);
   renderPurchaseForm();
+  renderCustomersModule();
 }
 
 async function loadDashboard() {
@@ -293,6 +294,62 @@ function renderTreatmentForecast(form) {
 async function loadCustomers() {
   const data = await apiFetch('/api/customers');
   state.customers = ensureArray(data.items);
+  if (state.selectedCustomerId && !state.customers.some((c) => c.id === state.selectedCustomerId)) {
+    state.selectedCustomerId = '';
+  }
+}
+
+
+function renderCustomersModule() {
+  const selected = state.customers.find((c) => c.id === state.selectedCustomerId);
+
+  byId('clientes').innerHTML = `
+    <h2>Clientes cadastrados</h2>
+    <div class="grid-form" style="grid-template-columns: 1fr 1fr; gap: 16px;">
+      <div>
+        <h3>Menu de clientes</h3>
+        ${state.customers.length ? `<div class="stack">${state.customers.map((c) => `<button class="quick-btn" data-open-customer="${c.id}">${c.name} • ${c.phone}</button>`).join('')}</div>` : '<div class="empty">Nenhum cliente cadastrado.</div>'}
+      </div>
+      <div>
+        <h3>Dados do cliente</h3>
+        ${selected ? `
+          <form id="customer-edit-form" class="grid-form" data-customer-id="${selected.id}">
+            <input name="name" value="${selected.name}" required />
+            <input name="email" type="email" value="${selected.email}" required />
+            <input name="phone" value="${selected.phone}" required />
+            <input name="address" value="${selected.address}" required />
+            <button type="submit">Salvar alterações</button>
+          </form>
+          <small>ID: ${selected.id}</small>
+        ` : '<div class="empty">Selecione um cliente no menu para visualizar/editar.</div>'}
+      </div>
+    </div>
+  `;
+
+  document.querySelectorAll('[data-open-customer]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.selectedCustomerId = btn.getAttribute('data-open-customer') || '';
+      renderCustomersModule();
+    });
+  });
+
+  const form = byId('customer-edit-form');
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const customerId = form.getAttribute('data-customer-id');
+      const payload = Object.fromEntries(new FormData(form).entries());
+      try {
+        await apiFetch(`/api/customers/${customerId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+        await loadCustomers();
+        renderCustomersModule();
+        renderPurchaseForm();
+        alert('Informações do cliente salvas com sucesso.');
+      } catch (error) {
+        alert(error.message || 'Erro ao salvar cliente');
+      }
+    });
+  }
 }
 
 function renderPurchaseForm() {
@@ -355,8 +412,10 @@ function renderPurchaseForm() {
     try {
       const data = await apiFetch('/api/customers', { method: 'POST', body: JSON.stringify(payload) });
       state.customers = [data.item, ...state.customers];
+      state.selectedCustomerId = data.item.id;
       const current = data.item.id;
       renderPurchaseForm();
+      renderCustomersModule();
       byId('sale-customer').value = current;
       alert('Cliente cadastrado com sucesso.');
     } catch (error) {

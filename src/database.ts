@@ -78,3 +78,16 @@ export function createCustomer(input: Omit<Customer, 'id' | 'createdAt'>) {
 
   return customer;
 }
+
+
+export function updateCustomer(id: string, input: Omit<Customer, 'id' | 'createdAt'>) {
+  const conn = initDatabase();
+  const exists = getCustomerById(id);
+  if (!exists) return undefined;
+
+  conn
+    .prepare('UPDATE customers SET name = ?, email = ?, phone = ?, address = ? WHERE id = ?')
+    .run(input.name, input.email, input.phone, input.address, id);
+
+  return getCustomerById(id);
+}
