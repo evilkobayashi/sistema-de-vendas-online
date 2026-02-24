@@ -132,12 +132,13 @@ describe('4bio internal sales app', () => {
         email: 'formula@example.com',
         phone: '11999999666',
         address: 'Rua H',
-        items: [{ medicineId: 'm2', quantity: 2, tabletsPerDay: 2, tabletsPerPackage: 30 }],
+        items: [{ medicineId: 'm2', quantity: 2, tabletsPerDay: 2, tabletsPerPackage: 30, treatmentDays: 12 }],
         recurring: { discountPercent: 5 }
       });
 
     expect(response.status).toBe(201);
     expect(response.body.order.items[0].estimatedRunOutDate).toBeTruthy();
+    expect(response.body.order.items[0].treatmentDays).toBe(12);
     expect(response.body.order.estimatedTreatmentEndDate).toBeTruthy();
     expect(response.body.order.recurring.nextBillingDate).toBe(response.body.order.estimatedTreatmentEndDate);
   });

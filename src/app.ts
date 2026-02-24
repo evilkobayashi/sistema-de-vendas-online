@@ -40,7 +40,8 @@ const saleSchema = z.object({
       medicineId: z.string(),
       quantity: z.number().int().positive(),
       tabletsPerDay: z.number().positive().optional(),
-      tabletsPerPackage: z.number().int().positive().optional()
+      tabletsPerPackage: z.number().int().positive().optional(),
+      treatmentDays: z.number().int().positive().optional()
     })
   ).min(1),
   prescriptionCode: z.string().optional(),
@@ -139,7 +140,8 @@ function addDays(startIso: string, days: number) {
   return dt.toISOString().slice(0, 10);
 }
 
-function calculateRunOutDate(quantity: number, tabletsPerDay?: number, tabletsPerPackage?: number) {
+function calculateRunOutDate(quantity: number, tabletsPerDay?: number, tabletsPerPackage?: number, treatmentDays?: number) {
+  if (treatmentDays && treatmentDays > 0) return addDays(new Date().toISOString(), treatmentDays);
   if (!tabletsPerDay || tabletsPerDay <= 0) return undefined;
   const unitsPerPackage = tabletsPerPackage ?? 30;
   const totalTablets = quantity * unitsPerPackage;
@@ -469,7 +471,7 @@ export function createApp() {
     const meds = items.map((item) => {
       const med = medicines.find((m) => m.id === item.medicineId);
       if (!med) return null;
-      const estimatedRunOutDate = calculateRunOutDate(item.quantity, item.tabletsPerDay, item.tabletsPerPackage);
+      const estimatedRunOutDate = calculateRunOutDate(item.quantity, item.tabletsPerDay, item.tabletsPerPackage, item.treatmentDays);
       return {
         medicineId: med.id,
         medicineName: med.name,
@@ -479,6 +481,7 @@ export function createApp() {
         controlled: med.controlled,
         tabletsPerDay: item.tabletsPerDay,
         tabletsPerPackage: item.tabletsPerPackage,
+        treatmentDays: item.treatmentDays,
         estimatedRunOutDate
       };
     });

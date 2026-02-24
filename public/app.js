@@ -251,6 +251,45 @@ function renderPrescriptionSuggestions(suggestions) {
     .join('');
 }
 
+function addDaysFromNow(days) {
+  const dt = new Date();
+  dt.setDate(dt.getDate() + Number(days || 0));
+  return dt.toISOString().slice(0, 10);
+}
+
+function renderTreatmentForecast(form) {
+  const quantity = Number(form.querySelector('[name="quantity"]').value || 0);
+  const tabletsPerDay = Number(form.querySelector('[name="tabletsPerDay"]').value || 0);
+  const tabletsPerPackage = Number(form.querySelector('[name="tabletsPerPackage"]').value || 30);
+  const treatmentDays = Number(form.querySelector('[name="treatmentDays"]').value || 0);
+
+  const box = byId('sale-forecast');
+  if (!box) return;
+
+  if (!tabletsPerDay || !treatmentDays || !tabletsPerPackage) {
+    box.innerHTML = '<div class="empty">Informe comprimidos/dia e dias de tratamento para ver a previsão de término e recomendação de recorrência.</div>';
+    return;
+  }
+
+  const neededTablets = Math.ceil(tabletsPerDay * treatmentDays);
+  const recommendedBoxes = Math.max(1, Math.ceil(neededTablets / tabletsPerPackage));
+  const coveredDaysByQuantity = quantity > 0 ? Math.floor((quantity * tabletsPerPackage) / tabletsPerDay) : 0;
+  const projectedRunOutDate = addDaysFromNow(quantity > 0 ? coveredDaysByQuantity : treatmentDays);
+  const expectedTreatmentEndDate = addDaysFromNow(treatmentDays);
+  const recurrenceContactDate = addDaysFromNow(Math.max(0, treatmentDays - 3));
+
+  box.innerHTML = `
+    <div class="card">
+      <strong>Previsão para orientação ao cliente</strong><br/>
+      Necessário para o tratamento: <strong>${neededTablets}</strong> comprimidos (~<strong>${recommendedBoxes}</strong> caixas).<br/>
+      Quantidade informada cobre cerca de <strong>${coveredDaysByQuantity || treatmentDays}</strong> dias.<br/>
+      Previsão de término (quantidade atual): <strong>${projectedRunOutDate}</strong>.<br/>
+      Término esperado do tratamento: <strong>${expectedTreatmentEndDate}</strong>.<br/>
+      Sugestão para recorrência: confirmar com o cliente em <strong>${recurrenceContactDate}</strong> (3 dias antes).
+    </div>
+  `;
+}
+
 function renderPurchaseForm() {
   byId('nova-venda').innerHTML = `
     <h2>Nova compra</h2>
@@ -263,6 +302,7 @@ function renderPurchaseForm() {
       <input name="quantity" type="number" min="1" value="1" required/>
       <input name="tabletsPerDay" type="number" min="0.1" step="0.1" placeholder="Comprimidos por dia"/>
       <input name="tabletsPerPackage" type="number" min="1" step="1" value="30" placeholder="Comprimidos por caixa"/>
+      <input name="treatmentDays" type="number" min="1" step="1" placeholder="Quantidade de dias do tratamento"/>
       <input name="prescriptionCode" placeholder="Código da receita (controlados)"/>
       <textarea name="prescriptionText" rows="4" placeholder="Cole aqui o texto do pedido médico para identificar remédios automaticamente"></textarea>
       <input name="prescriptionFile" id="prescription-file" type="file" accept="application/pdf,image/*" />
@@ -277,6 +317,7 @@ function renderPurchaseForm() {
       <input name="nextBillingDate" type="date"/>
       <button type="submit">Registrar</button>
     </form>
+    <section id="sale-forecast" class="stack"></section>
   `;
   byId('parse-prescription-btn').addEventListener('click', async () => {
     const form = byId('sale-form');
@@ -341,12 +382,19 @@ function renderPurchaseForm() {
     }
   });
 
+  const form = byId('sale-form');
+  ['quantity', 'tabletsPerDay', 'tabletsPerPackage', 'treatmentDays'].forEach((field) => {
+    const input = form.querySelector(`[name="${field}"]`);
+    if (input) input.addEventListener('input', () => renderTreatmentForecast(form));
+  });
+  renderTreatmentForecast(form);
+
   byId('sale-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const p = Object.fromEntries(new FormData(e.target).entries());
     const payload = {
       patientName: p.patientName, email: p.email, phone: p.phone, address: p.address, prescriptionCode: p.prescriptionCode || undefined,
-      items: [{ medicineId: p.medicineId, quantity: Number(p.quantity), tabletsPerDay: p.tabletsPerDay ? Number(p.tabletsPerDay) : undefined, tabletsPerPackage: p.tabletsPerPackage ? Number(p.tabletsPerPackage) : undefined }],
+      items: [{ medicineId: p.medicineId, quantity: Number(p.quantity), tabletsPerDay: p.tabletsPerDay ? Number(p.tabletsPerDay) : undefined, tabletsPerPackage: p.tabletsPerPackage ? Number(p.tabletsPerPackage) : undefined, treatmentDays: p.treatmentDays ? Number(p.treatmentDays) : undefined }],
       recurring: p.recurringEnabled === 'on' ? { discountPercent: Number(p.discountPercent || 0), nextBillingDate: p.nextBillingDate } : undefined
     };
     try {

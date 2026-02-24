@@ -50,6 +50,7 @@ export type OrderItem = {
   quantity: number;
   tabletsPerDay?: number;
   tabletsPerPackage?: number;
+  treatmentDays?: number;
 };
 
 export type Order = {
