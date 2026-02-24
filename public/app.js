@@ -68,6 +68,7 @@ async function refreshAll() {
   renderCustomersModule();
   renderDoctorsModule();
   renderMasterDataModule();
+  renderInventoryOpsModule();
 }
 
 async function loadDashboard() {
@@ -475,6 +476,27 @@ async function loadMasterData() {
   state.packagingFormulas = ensureArray(packagingFormulas.items);
 }
 
+
+function bindCreateForm({ id, endpoint, onSuccess }) {
+  const form = byId(id);
+  if (!form) return;
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const payload = Object.fromEntries(new FormData(form).entries());
+    try {
+      await apiFetch(endpoint, { method: 'POST', body: JSON.stringify(payload) });
+      form.reset();
+      await Promise.all([loadMasterData(), loadInventory(), loadCatalog(), loadDashboard()]);
+      renderMasterDataModule();
+      renderInventoryOpsModule();
+      if (onSuccess) onSuccess();
+      alert('Cadastro salvo com sucesso.');
+    } catch (error) {
+      alert(error.message || 'Erro ao salvar cadastro');
+    }
+  });
+}
+
 function renderMasterDataModule() {
   const el = byId('cadastros');
   if (!el) return;
@@ -498,6 +520,25 @@ function renderMasterDataModule() {
       <form id="raw-material-form" class="grid-form card"><h3>Cadastro de Matéria-prima</h3><input name="name" placeholder="Nome" required/><input name="code" placeholder="Código" required/><input name="unit" placeholder="Unidade" required/><input name="cost" type="number" step="0.01" min="0.01" placeholder="Custo" required/><button type="submit">Salvar matéria-prima</button></form>
       <form id="standard-formula-form" class="grid-form card"><h3>Cadastro de Fórmulas Padrão</h3><input name="name" placeholder="Nome" required/><input name="version" placeholder="Versão" required/><input name="productId" placeholder="ID do produto" required/><input name="instructions" placeholder="Instruções" required/><button type="submit">Salvar fórmula padrão</button></form>
       <form id="packaging-formula-form" class="grid-form card"><h3>Cadastro de Fórmulas de Embalagem</h3><input name="name" placeholder="Nome" required/><input name="productId" placeholder="ID do produto" required/><input name="packagingType" placeholder="Tipo de embalagem" required/><input name="unitsPerPackage" type="number" min="1" placeholder="Unidades por embalagem" required/><input name="notes" placeholder="Observações" required/><button type="submit">Salvar fórmula embalagem</button></form>
+    </div>
+  `;
+
+  bindCreateForm({ id: 'employee-form', endpoint: '/api/employees' });
+  bindCreateForm({ id: 'supplier-form', endpoint: '/api/suppliers' });
+  bindCreateForm({ id: 'finished-product-form', endpoint: '/api/finished-products' });
+  bindCreateForm({ id: 'raw-material-form', endpoint: '/api/raw-materials' });
+  bindCreateForm({ id: 'standard-formula-form', endpoint: '/api/standard-formulas' });
+  bindCreateForm({ id: 'packaging-formula-form', endpoint: '/api/packaging-formulas' });
+}
+
+function renderInventoryOpsModule() {
+  const el = byId('inventario-op');
+  if (!el) return;
+
+  el.innerHTML = `
+    <h2>Inventário operacional</h2>
+    <p class="empty">Módulo dedicado para entradas de mercadoria, XML NF-e, impressões e atualização automática de preços.</p>
+    <div class="grid-form" style="grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 16px; margin-top: 16px;">
       <form id="entry-conversion-form" class="grid-form card"><h3>Entrada de Mercadoria (conversão)</h3><select name="medicineId" required>${state.medicines.map((m) => `<option value="${m.id}">${m.name}</option>`).join('')}</select><input name="sourceQuantity" type="number" min="0.01" step="0.01" placeholder="Qtd origem" required/><input name="sourceUnit" placeholder="Unidade origem (ex: caixa)" required/><input name="conversionFactor" type="number" min="0.01" step="0.01" placeholder="Fator conversão" required/><input name="targetUnit" placeholder="Unidade destino (ex: comprimido)" required/><input name="batchCode" placeholder="Lote" required/><input name="expiresAt" type="date" required/><input name="unitCost" type="number" min="0.01" step="0.01" placeholder="Custo unitário" required/><input name="supplier" placeholder="Fornecedor" required/><button type="submit">Lançar entrada convertida</button></form>
       <form id="entry-nfe-form" class="grid-form card"><h3>Entrada por XML NF-e</h3><textarea name="xml" rows="4" placeholder="Cole o XML da NF-e" required></textarea><input name="supplier" placeholder="Fornecedor" required/><input name="defaultExpiresAt" type="date"/><input name="defaultUnitCost" type="number" min="0.01" step="0.01" placeholder="Custo unitário padrão"/><input name="conversionFactor" type="number" min="0.01" step="0.01" value="1"/><button type="submit">Importar XML NF-e</button></form>
       <form id="pricing-auto-form" class="grid-form card"><h3>Atualização automática de preço</h3><input name="percent" type="number" step="0.01" placeholder="Percentual (+/-)" required/><input name="specialty" placeholder="Especialidade (opcional)"/><input name="lab" placeholder="Laboratório (opcional)"/><input name="reason" placeholder="Motivo" value="Atualização automática de lista de preço" required/><button type="submit">Aplicar atualização</button></form>
@@ -505,33 +546,9 @@ function renderMasterDataModule() {
     </div>
   `;
 
-  const bindForm = (id, endpoint) => {
-    const form = byId(id);
-    if (!form) return;
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const payload = Object.fromEntries(new FormData(form).entries());
-      try {
-        await apiFetch(endpoint, { method: 'POST', body: JSON.stringify(payload) });
-        form.reset();
-        await loadMasterData();
-        renderMasterDataModule();
-        alert('Cadastro salvo com sucesso.');
-      } catch (error) {
-        alert(error.message || 'Erro ao salvar cadastro');
-      }
-    });
-  };
-
-  bindForm('employee-form', '/api/employees');
-  bindForm('supplier-form', '/api/suppliers');
-  bindForm('finished-product-form', '/api/finished-products');
-  bindForm('raw-material-form', '/api/raw-materials');
-  bindForm('standard-formula-form', '/api/standard-formulas');
-  bindForm('packaging-formula-form', '/api/packaging-formulas');
-  bindForm('entry-conversion-form', '/api/inventory/entries');
-  bindForm('entry-nfe-form', '/api/inventory/entries/nfe-xml');
-  bindForm('pricing-auto-form', '/api/pricing/auto-update');
+  bindCreateForm({ id: 'entry-conversion-form', endpoint: '/api/inventory/entries' });
+  bindCreateForm({ id: 'entry-nfe-form', endpoint: '/api/inventory/entries/nfe-xml' });
+  bindCreateForm({ id: 'pricing-auto-form', endpoint: '/api/pricing/auto-update', onSuccess: loadCatalog });
 
   const labelsBtn = byId('print-labels-btn');
   const qualityBtn = byId('print-quality-btn');
