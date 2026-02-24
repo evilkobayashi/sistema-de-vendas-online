@@ -11,6 +11,16 @@ export type Customer = {
   createdAt: string;
 };
 
+export type Doctor = {
+  id: string;
+  name: string;
+  crm: string;
+  specialty: string;
+  email: string;
+  phone: string;
+  createdAt: string;
+};
+
 let db: Database.Database | null = null;
 
 function resolveDbPath() {
@@ -34,6 +44,18 @@ export function initDatabase() {
     );
     CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(name);
     CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
+
+    CREATE TABLE IF NOT EXISTS doctors (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      crm TEXT NOT NULL UNIQUE,
+      specialty TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_doctors_name ON doctors(name);
+    CREATE INDEX IF NOT EXISTS idx_doctors_crm ON doctors(crm);
   `);
   return db;
 }
@@ -90,4 +112,58 @@ export function updateCustomer(id: string, input: Omit<Customer, 'id' | 'created
     .run(input.name, input.email, input.phone, input.address, id);
 
   return getCustomerById(id);
+}
+
+
+export function listDoctors(search?: string) {
+  const conn = initDatabase();
+  if (search && search.trim()) {
+    const q = `%${search.trim()}%`;
+    return conn
+      .prepare(
+        `SELECT id, name, crm, specialty, email, phone, created_at as createdAt
+         FROM doctors
+         WHERE name LIKE ? OR crm LIKE ? OR specialty LIKE ?
+         ORDER BY name ASC`
+      )
+      .all(q, q, q) as Doctor[];
+  }
+
+  return conn
+    .prepare('SELECT id, name, crm, specialty, email, phone, created_at as createdAt FROM doctors ORDER BY name ASC')
+    .all() as Doctor[];
+}
+
+export function getDoctorById(id: string) {
+  const conn = initDatabase();
+  return conn
+    .prepare('SELECT id, name, crm, specialty, email, phone, created_at as createdAt FROM doctors WHERE id = ?')
+    .get(id) as Doctor | undefined;
+}
+
+export function createDoctor(input: Omit<Doctor, 'id' | 'createdAt'>) {
+  const conn = initDatabase();
+  const item: Doctor = {
+    id: `d-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+    ...input,
+    createdAt: new Date().toISOString()
+  };
+
+  conn
+    .prepare('INSERT INTO doctors (id, name, crm, specialty, email, phone, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .run(item.id, item.name, item.crm, item.specialty, item.email, item.phone, item.createdAt);
+
+  return item;
+}
+
+export function updateDoctor(id: string, input: Omit<Doctor, 'id' | 'createdAt'>) {
+  const conn = initDatabase();
+  const exists = getDoctorById(id);
+  if (!exists) return undefined;
+
+  conn
+    .prepare('UPDATE doctors SET name = ?, crm = ?, specialty = ?, email = ?, phone = ? WHERE id = ?')
+    .run(input.name, input.crm, input.specialty, input.email, input.phone, id);
+
+  return getDoctorById(id);
 }

@@ -19,7 +19,7 @@ import {
   type User
 } from './data.js';
 import { loadPersistentState, persistState } from './store.js';
-import { createCustomer, getCustomerById, initDatabase, listCustomers, updateCustomer } from './database.js';
+import { createCustomer, createDoctor, getCustomerById, getDoctorById, initDatabase, listCustomers, listDoctors, updateCustomer, updateDoctor } from './database.js';
 import { createShipmentWithFallback, quoteWithFallback } from './shipping.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -95,6 +95,16 @@ const customerCreateSchema = z.object({
 });
 
 const customerUpdateSchema = customerCreateSchema;
+
+const doctorCreateSchema = z.object({
+  name: z.string().min(2),
+  crm: z.string().min(4),
+  specialty: z.string().min(2),
+  email: z.string().email(),
+  phone: z.string().min(8)
+});
+
+const doctorUpdateSchema = doctorCreateSchema;
 
 const medicineCreateSchema = z.object({
   name: z.string().min(3),
@@ -405,6 +415,35 @@ export function createApp() {
 
     const item = updateCustomer(req.params.customerId, parsed.data);
     if (!item) return res.status(404).json({ error: 'Cliente não encontrado' });
+    return res.json({ item });
+  });
+
+  app.get('/api/doctors', (req: Request, res: Response) => {
+    const q = req.query.q?.toString();
+    const items = listDoctors(q);
+    return res.json({ items });
+  });
+
+  app.post('/api/doctors', (req: Request, res: Response) => {
+    const parsed = doctorCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const item = createDoctor(parsed.data);
+    return res.status(201).json({ item });
+  });
+
+  app.get('/api/doctors/:doctorId', (req: Request, res: Response) => {
+    const item = getDoctorById(req.params.doctorId);
+    if (!item) return res.status(404).json({ error: 'Médico não encontrado' });
+    return res.json({ item });
+  });
+
+  app.patch('/api/doctors/:doctorId', (req: Request, res: Response) => {
+    const parsed = doctorUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const item = updateDoctor(req.params.doctorId, parsed.data);
+    if (!item) return res.status(404).json({ error: 'Médico não encontrado' });
     return res.json({ item });
   });
 

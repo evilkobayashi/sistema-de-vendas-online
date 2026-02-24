@@ -99,6 +99,47 @@ describe('4bio internal sales app', () => {
     expect(fetched.body.item.email).toBe('cliente.editado@example.com');
   });
 
+
+  it('cadastra e lista médicos no menu de médicos', async () => {
+    const token = await loginAs();
+
+    const created = await request(app)
+      .post('/api/doctors')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Dra. Helena Costa', crm: 'CRM-12345', specialty: 'Cardiologia', email: 'helena@clinic.com', phone: '11999990000' });
+
+    expect(created.status).toBe(201);
+
+    const listed = await request(app).get('/api/doctors?q=Helena').set('Authorization', `Bearer ${token}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body.items.some((x: { crm: string }) => x.crm === 'CRM-12345')).toBe(true);
+  });
+
+  it('edita médico cadastrado e retorna dados atualizados', async () => {
+    const token = await loginAs();
+
+    const created = await request(app)
+      .post('/api/doctors')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Dr. Bruno Lima', crm: 'CRM-54321', specialty: 'Clínica Geral', email: 'bruno@clinic.com', phone: '11998887766' });
+
+    const updated = await request(app)
+      .patch(`/api/doctors/${created.body.item.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Dr. Bruno Lima', crm: 'CRM-54321', specialty: 'Endocrinologia', email: 'bruno@clinic.com', phone: '11997776655' });
+
+    expect(updated.status).toBe(200);
+    expect(updated.body.item.specialty).toBe('Endocrinologia');
+
+    const fetched = await request(app)
+      .get(`/api/doctors/${created.body.item.id}`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(fetched.status).toBe(200);
+    expect(fetched.body.item.phone).toBe('11997776655');
+  });
+
+
   it('permite criar pedido usando customerId cadastrado', async () => {
     const token = await loginAs();
     const createdCustomer = await request(app)

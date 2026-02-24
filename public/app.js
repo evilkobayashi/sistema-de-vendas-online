@@ -1,4 +1,4 @@
-const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
+const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', doctors: [], selectedDoctorId: '', doctorsView: 'menu', catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
 const byId = (id) => document.getElementById(id);
 const money = (v) => `R$ ${Number(v).toFixed(2)}`;
 const ensureArray = (v) => (Array.isArray(v) ? v : []);
@@ -63,9 +63,10 @@ byId('login-form').addEventListener('submit', async (e) => {
 });
 
 async function refreshAll() {
-  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers()]);
+  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers(), loadDoctors()]);
   renderPurchaseForm();
   renderCustomersModule();
+  renderDoctorsModule();
 }
 
 async function loadDashboard() {
@@ -347,6 +348,108 @@ function renderCustomersModule() {
         alert('Informações do cliente salvas com sucesso.');
       } catch (error) {
         alert(error.message || 'Erro ao salvar cliente');
+      }
+    });
+  }
+}
+
+async function loadDoctors() {
+  const data = await apiFetch('/api/doctors');
+  state.doctors = ensureArray(data.items);
+  if (state.selectedDoctorId && !state.doctors.some((d) => d.id === state.selectedDoctorId)) {
+    state.selectedDoctorId = '';
+  }
+}
+
+function renderDoctorsModule() {
+  const selected = state.doctors.find((d) => d.id === state.selectedDoctorId);
+
+  byId('medicos').innerHTML = `
+    <h2>Médicos</h2>
+    <div class="inline">
+      <button class="quick-btn" data-doctors-view="menu">Menu de médicos</button>
+      <button class="quick-btn" data-doctors-view="cadastro">Cadastro de médicos</button>
+    </div>
+    ${state.doctorsView === 'cadastro' ? `
+      <form id="doctor-create-form" class="grid-form" style="margin-top:12px">
+        <input name="name" placeholder="Nome do médico" required />
+        <input name="crm" placeholder="CRM" required />
+        <input name="specialty" placeholder="Especialidade" required />
+        <input name="email" type="email" placeholder="E-mail" required />
+        <input name="phone" placeholder="Telefone" required />
+        <button type="submit">Cadastrar médico</button>
+      </form>
+    ` : ''}
+    ${state.doctorsView === 'menu' ? `
+      <div class="grid-form" style="grid-template-columns: 1fr 1fr; gap: 16px; margin-top:12px">
+        <div>
+          <h3>Menu de médicos</h3>
+          ${state.doctors.length ? `<div class="stack">${state.doctors.map((d) => `<button class="quick-btn" data-open-doctor="${d.id}">${d.name} • CRM ${d.crm}</button>`).join('')}</div>` : '<div class="empty">Nenhum médico cadastrado.</div>'}
+        </div>
+        <div>
+          <h3>Informações do médico</h3>
+          ${selected ? `
+            <form id="doctor-edit-form" class="grid-form" data-doctor-id="${selected.id}">
+              <input name="name" value="${selected.name}" required />
+              <input name="crm" value="${selected.crm}" required />
+              <input name="specialty" value="${selected.specialty}" required />
+              <input name="email" type="email" value="${selected.email}" required />
+              <input name="phone" value="${selected.phone}" required />
+              <button type="submit">Salvar alterações</button>
+            </form>
+            <small>ID: ${selected.id}</small>
+          ` : '<div class="empty">Selecione um médico para verificar/editar informações.</div>'}
+        </div>
+      </div>
+    ` : ''}
+  `;
+
+  document.querySelectorAll('[data-doctors-view]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.doctorsView = btn.getAttribute('data-doctors-view') || 'menu';
+      renderDoctorsModule();
+    });
+  });
+
+  document.querySelectorAll('[data-open-doctor]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.selectedDoctorId = btn.getAttribute('data-open-doctor') || '';
+      state.doctorsView = 'menu';
+      renderDoctorsModule();
+    });
+  });
+
+  const createForm = byId('doctor-create-form');
+  if (createForm) {
+    createForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = Object.fromEntries(new FormData(createForm).entries());
+      try {
+        const data = await apiFetch('/api/doctors', { method: 'POST', body: JSON.stringify(payload) });
+        state.doctors = [data.item, ...state.doctors];
+        state.selectedDoctorId = data.item.id;
+        state.doctorsView = 'menu';
+        renderDoctorsModule();
+        alert('Médico cadastrado com sucesso.');
+      } catch (error) {
+        alert(error.message || 'Erro ao cadastrar médico');
+      }
+    });
+  }
+
+  const editForm = byId('doctor-edit-form');
+  if (editForm) {
+    editForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const doctorId = editForm.getAttribute('data-doctor-id');
+      const payload = Object.fromEntries(new FormData(editForm).entries());
+      try {
+        await apiFetch(`/api/doctors/${doctorId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+        await loadDoctors();
+        renderDoctorsModule();
+        alert('Informações do médico salvas com sucesso.');
+      } catch (error) {
+        alert(error.message || 'Erro ao salvar médico');
       }
     });
   }
