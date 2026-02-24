@@ -7,13 +7,25 @@ async function apiFetch(url, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
-  const response = await fetch(url, { ...options, headers });
-  const payload = (response.headers.get('content-type') || '').includes('application/json') ? await response.json() : await response.text();
+
+  const doRequest = async (targetUrl) => {
+    const response = await fetch(targetUrl, { ...options, headers });
+    const payload = (response.headers.get('content-type') || '').includes('application/json') ? await response.json() : await response.text();
+    return { response, payload };
+  };
+
+  let { response, payload } = await doRequest(url);
+
+  if (response.status === 404 && url.startsWith('/api/')) {
+    ({ response, payload } = await doRequest(url.slice(1)));
+  }
+
   if (!response.ok) {
     const error = typeof payload === 'object' && payload?.error ? payload.error : `Erro HTTP ${response.status}`;
     if (response.status === 401) location.reload();
     throw new Error(error);
   }
+
   return payload;
 }
 
