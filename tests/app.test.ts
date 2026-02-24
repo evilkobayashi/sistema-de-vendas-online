@@ -56,6 +56,47 @@ describe('4bio internal sales app', () => {
     expect(cardio.stockTotal).toBeGreaterThanOrEqual(33);
   });
 
+
+
+  it('cadastra e lista clientes em banco de dados', async () => {
+    const token = await loginAs();
+
+    const created = await request(app)
+      .post('/api/customers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Cliente Teste', email: 'cliente@example.com', phone: '11977776666', address: 'Rua Cliente, 10' });
+
+    expect(created.status).toBe(201);
+
+    const listed = await request(app).get('/api/customers?q=Cliente').set('Authorization', `Bearer ${token}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body.items.some((x: { email: string }) => x.email === 'cliente@example.com')).toBe(true);
+  });
+
+  it('permite criar pedido usando customerId cadastrado', async () => {
+    const token = await loginAs();
+    const createdCustomer = await request(app)
+      .post('/api/customers')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Cliente Pedido', email: 'pedido@example.com', phone: '11911112222', address: 'Rua Pedido, 20' });
+
+    const createdOrder = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        customerId: createdCustomer.body.item.id,
+        patientName: 'fallback',
+        email: 'fallback@example.com',
+        phone: '111111111',
+        address: 'fallback',
+        items: [{ medicineId: 'm2', quantity: 1 }]
+      });
+
+    expect(createdOrder.status).toBe(201);
+    expect(createdOrder.body.order.patientName).toBe('Cliente Pedido');
+    expect(createdOrder.body.order.email).toBe('pedido@example.com');
+  });
+
   it('reserva estoque na criação de pedido e bloqueia quando falta saldo', async () => {
     const token = await loginAs();
 

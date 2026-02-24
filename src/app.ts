@@ -19,6 +19,7 @@ import {
   type User
 } from './data.js';
 import { loadPersistentState, persistState } from './store.js';
+import { createCustomer, getCustomerById, initDatabase, listCustomers } from './database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,6 +36,7 @@ const saleSchema = z.object({
   email: z.string().email(),
   phone: z.string().min(8),
   address: z.string().min(5),
+  customerId: z.string().optional(),
   items: z.array(
     z.object({
       medicineId: z.string(),
@@ -73,6 +75,13 @@ const prescriptionDocumentSchema = z.object({
   filename: z.string().min(3),
   mimeType: z.string().min(3),
   contentBase64: z.string().min(16)
+});
+
+const customerCreateSchema = z.object({
+  name: z.string().min(2),
+  email: z.string().email(),
+  phone: z.string().min(8),
+  address: z.string().min(5)
 });
 
 const medicineCreateSchema = z.object({
@@ -327,6 +336,7 @@ export function createApp() {
   app.use(express.json({ limit: '2mb' }));
   const publicDir = resolvePublicDir();
   loadPersistentState();
+  initDatabase();
 
   app.get('/health/live', (_: Request, res: Response) => res.json({ status: 'ok' }));
   app.get('/health/ready', (_: Request, res: Response) => res.json({ status: 'ready', sessions: sessions.size }));
@@ -356,6 +366,20 @@ export function createApp() {
   });
 
   app.use('/api', authRequired);
+
+  app.get('/api/customers', (req: Request, res: Response) => {
+    const q = req.query.q?.toString();
+    const items = listCustomers(q);
+    return res.json({ items });
+  });
+
+  app.post('/api/customers', (req: Request, res: Response) => {
+    const parsed = customerCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const item = createCustomer(parsed.data);
+    return res.status(201).json({ item });
+  });
 
   app.get('/api/medicines', (_req: Request, res: Response) => {
     const summary = buildInventorySummary();
@@ -466,7 +490,8 @@ export function createApp() {
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
     const authUser = getAuthUser(req);
-    const { items, prescriptionCode, recurring } = parsed.data;
+    const { items, prescriptionCode, recurring, customerId } = parsed.data;
+    const customer = customerId ? getCustomerById(customerId) : undefined;
 
     const meds = items.map((item) => {
       const med = medicines.find((m) => m.id === item.medicineId);
@@ -517,10 +542,10 @@ export function createApp() {
 
     const order: Order = {
       id: orderId,
-      patientName: parsed.data.patientName,
-      email: parsed.data.email,
-      phone: parsed.data.phone,
-      address: parsed.data.address,
+      patientName: customer?.name || parsed.data.patientName,
+      email: customer?.email || parsed.data.email,
+      phone: customer?.phone || parsed.data.phone,
+      address: customer?.address || parsed.data.address,
       items: validMeds.map(({ controlled, ...rest }) => rest),
       total,
       controlledValidated: hasControlled,

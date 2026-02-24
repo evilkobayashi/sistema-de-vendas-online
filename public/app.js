@@ -1,4 +1,4 @@
-const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
+const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
 const byId = (id) => document.getElementById(id);
 const money = (v) => `R$ ${Number(v).toFixed(2)}`;
 const ensureArray = (v) => (Array.isArray(v) ? v : []);
@@ -63,7 +63,7 @@ byId('login-form').addEventListener('submit', async (e) => {
 });
 
 async function refreshAll() {
-  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets()]);
+  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers()]);
   renderPurchaseForm();
 }
 
@@ -290,15 +290,24 @@ function renderTreatmentForecast(form) {
   `;
 }
 
+async function loadCustomers() {
+  const data = await apiFetch('/api/customers');
+  state.customers = ensureArray(data.items);
+}
+
 function renderPurchaseForm() {
   byId('nova-venda').innerHTML = `
     <h2>Nova compra</h2>
     <form id="sale-form" class="grid-form">
+      <select name="customerId" id="sale-customer"><option value="">Cliente avulso (sem cadastro)</option>${state.customers.map((c) => `<option value="${c.id}">${c.name} • ${c.phone}</option>`).join('')}</select>
       <input name="patientName" placeholder="Paciente" required/>
       <input name="email" type="email" placeholder="E-mail" required/>
       <input name="phone" placeholder="Telefone" required/>
       <input name="address" placeholder="Endereço" required/>
-      <select name="medicineId" required>${state.medicines.map((m) => `<option value="${m.id}">${m.name} (${money(m.price)})</option>`)}</select>
+      <div class="inline" style="grid-column:1 / -1;">
+        <button type="button" id="create-customer-btn" class="quick-btn">Cadastrar cliente com os dados acima</button>
+      </div>
+      <select name="medicineId" required>${state.medicines.map((m) => `<option value="${m.id}">${m.name} (${money(m.price)})</option>`).join('')}</select>
       <input name="quantity" type="number" min="1" value="1" required/>
       <input name="tabletsPerDay" type="number" min="0.1" step="0.1" placeholder="Comprimidos por dia"/>
       <input name="tabletsPerPackage" type="number" min="1" step="1" value="30" placeholder="Comprimidos por caixa"/>
@@ -319,8 +328,43 @@ function renderPurchaseForm() {
     </form>
     <section id="sale-forecast" class="stack"></section>
   `;
+
+  const form = byId('sale-form');
+  const customerSelect = byId('sale-customer');
+
+  if (customerSelect) {
+    customerSelect.addEventListener('change', () => {
+      const selected = state.customers.find((c) => c.id === customerSelect.value);
+      if (!selected) return;
+      form.querySelector('[name="patientName"]').value = selected.name;
+      form.querySelector('[name="email"]').value = selected.email;
+      form.querySelector('[name="phone"]').value = selected.phone;
+      form.querySelector('[name="address"]').value = selected.address;
+      renderTreatmentForecast(form);
+    });
+  }
+
+  byId('create-customer-btn').addEventListener('click', async () => {
+    const payload = {
+      name: form.querySelector('[name="patientName"]').value,
+      email: form.querySelector('[name="email"]').value,
+      phone: form.querySelector('[name="phone"]').value,
+      address: form.querySelector('[name="address"]').value
+    };
+
+    try {
+      const data = await apiFetch('/api/customers', { method: 'POST', body: JSON.stringify(payload) });
+      state.customers = [data.item, ...state.customers];
+      const current = data.item.id;
+      renderPurchaseForm();
+      byId('sale-customer').value = current;
+      alert('Cliente cadastrado com sucesso.');
+    } catch (error) {
+      alert(error.message || 'Erro ao cadastrar cliente');
+    }
+  });
+
   byId('parse-prescription-btn').addEventListener('click', async () => {
-    const form = byId('sale-form');
     const payload = Object.fromEntries(new FormData(form).entries());
     if (!payload.prescriptionText || String(payload.prescriptionText).trim().length < 8) {
       alert('Adicione um texto de pedido médico com mais detalhes para leitura automática.');
@@ -340,9 +384,7 @@ function renderPurchaseForm() {
     }
   });
 
-
   byId('parse-prescription-file-btn').addEventListener('click', async () => {
-    const form = byId('sale-form');
     const input = byId('prescription-file');
     const file = input?.files?.[0];
     if (!file) {
@@ -382,18 +424,22 @@ function renderPurchaseForm() {
     }
   });
 
-  const form = byId('sale-form');
   ['quantity', 'tabletsPerDay', 'tabletsPerPackage', 'treatmentDays'].forEach((field) => {
     const input = form.querySelector(`[name="${field}"]`);
     if (input) input.addEventListener('input', () => renderTreatmentForecast(form));
   });
   renderTreatmentForecast(form);
 
-  byId('sale-form').addEventListener('submit', async (e) => {
+  form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const p = Object.fromEntries(new FormData(e.target).entries());
     const payload = {
-      patientName: p.patientName, email: p.email, phone: p.phone, address: p.address, prescriptionCode: p.prescriptionCode || undefined,
+      customerId: p.customerId || undefined,
+      patientName: p.patientName,
+      email: p.email,
+      phone: p.phone,
+      address: p.address,
+      prescriptionCode: p.prescriptionCode || undefined,
       items: [{ medicineId: p.medicineId, quantity: Number(p.quantity), tabletsPerDay: p.tabletsPerDay ? Number(p.tabletsPerDay) : undefined, tabletsPerPackage: p.tabletsPerPackage ? Number(p.tabletsPerPackage) : undefined, treatmentDays: p.treatmentDays ? Number(p.treatmentDays) : undefined }],
       recurring: p.recurringEnabled === 'on' ? { discountPercent: Number(p.discountPercent || 0), nextBillingDate: p.nextBillingDate } : undefined
     };
@@ -401,9 +447,12 @@ function renderPurchaseForm() {
       const data = await apiFetch('/api/orders', { method: 'POST', body: JSON.stringify(payload) });
       const end = data.order.estimatedTreatmentEndDate ? ` • previsão de término: ${data.order.estimatedTreatmentEndDate}` : '';
       alert(`Pedido ${data.order.id} criado (${money(data.order.total)})${end}`);
-      await Promise.all([loadOrders(), loadDeliveries(), loadDashboard(), loadCatalog(), loadInventory()]);
+      await Promise.all([loadOrders(), loadDeliveries(), loadDashboard(), loadCatalog(), loadInventory(), loadCustomers()]);
       e.target.reset();
-    } catch (error) { alert(error.message || 'Erro ao criar pedido'); }
+      renderTreatmentForecast(form);
+    } catch (error) {
+      alert(error.message || 'Erro ao criar pedido');
+    }
   });
 }
 
