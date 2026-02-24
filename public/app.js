@@ -1,6 +1,7 @@
 const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [] };
 const byId = (id) => document.getElementById(id);
 const money = (v) => `R$ ${Number(v).toFixed(2)}`;
+const ensureArray = (v) => (Array.isArray(v) ? v : []);
 
 async function apiFetch(url, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -66,7 +67,7 @@ async function loadDashboard() {
       <div class="kpi"><div class="value">${money(data.indicators.totalSales)}</div><div>Total vendido</div></div>
     </div>
     <h3>Lembretes de recorrência</h3>
-    ${data.reminders.length ? data.reminders.map((x) => `<div class="card reminder"><strong>${x.orderId}</strong> • ${x.patientName}<br/>${x.message} (${x.nextBillingDate})${x.estimatedTreatmentEndDate ? `<br/>Término estimado do tratamento: ${x.estimatedTreatmentEndDate}` : ""}<div class="inline"><button data-confirm-order="${x.orderId}" class="quick-btn">Confirmado</button></div></div>`).join('') : '<div class="empty">Sem lembretes.</div>'}
+    ${ensureArray(data.reminders).length ? ensureArray(data.reminders).map((x) => `<div class="card reminder"><strong>${x.orderId}</strong> • ${x.patientName}<br/>${x.message} (${x.nextBillingDate})${x.estimatedTreatmentEndDate ? `<br/>Término estimado do tratamento: ${x.estimatedTreatmentEndDate}` : ""}<div class="inline"><button data-confirm-order="${x.orderId}" class="quick-btn">Confirmado</button></div></div>`).join('') : '<div class="empty">Sem lembretes.</div>'}
   `;
   document.querySelectorAll('[data-confirm-order]').forEach((btn) => btn.addEventListener('click', async () => {
     await apiFetch(`/api/orders/${btn.dataset.confirmOrder}/recurring/confirm`, { method: 'PATCH' });
@@ -81,7 +82,7 @@ function renderMedicineImage(medicine) {
 
 async function loadCatalog() {
   const data = await apiFetch('/api/medicines');
-  state.medicines = data.items;
+  state.medicines = ensureArray(data.items);
   byId('catalogo').innerHTML = `
     <h2>Catálogo farmacêutico</h2>
     <div class="cards">${state.medicines.map((m) => `<article class="card">${renderMedicineImage(m)}<h3>${m.name}</h3><p>${m.description}</p><p>${m.lab} • ${m.specialty}</p><p>Disponível: <strong>${m.inventory?.stockAvailable ?? 0}</strong></p><strong>${money(m.price)}</strong></article>`).join('')}</div>
@@ -107,7 +108,7 @@ async function loadInventory() {
       <button type="submit">Adicionar lote</button>
     </form>` : ''}
     <table class="table"><thead><tr><th>Medicamento</th><th>Disponível</th><th>Total</th><th>Lotes</th><th>Risco venc.</th></tr></thead>
-    <tbody>${summary.items.map((s) => `<tr><td>${s.medicineName}</td><td>${s.stockAvailable}</td><td>${s.stockTotal}</td><td>${s.lotCount}</td><td>${s.expiresIn30Days}</td></tr>`).join('')}</tbody></table>
+    <tbody>${ensureArray(summary.items).map((s) => `<tr><td>${s.medicineName}</td><td>${s.stockAvailable}</td><td>${s.stockTotal}</td><td>${s.lotCount}</td><td>${s.expiresIn30Days}</td></tr>`).join('')}</tbody></table>
   `;
 
   const form = byId('lot-form');
@@ -165,15 +166,18 @@ function renderPurchaseForm() {
 
 async function loadOrders() {
   const data = await apiFetch('/api/orders?page=1&pageSize=50');
-  byId('pedidos').innerHTML = `<h2>Histórico de pedidos</h2>${data.items.length ? `<table class="table"><thead><tr><th>Pedido</th><th>Paciente</th><th>Total</th><th>Término estimado</th><th>Criado em</th></tr></thead><tbody>${data.items.map((o) => `<tr><td>${o.id}</td><td>${o.patientName}</td><td>${money(o.total)}</td><td>${o.estimatedTreatmentEndDate || "-"}</td><td>${new Date(o.createdAt).toLocaleString()}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Sem pedidos.</div>'}`;
+  const orderItems = ensureArray(data.items);
+  byId('pedidos').innerHTML = `<h2>Histórico de pedidos</h2>${orderItems.length ? `<table class="table"><thead><tr><th>Pedido</th><th>Paciente</th><th>Total</th><th>Término estimado</th><th>Criado em</th></tr></thead><tbody>${orderItems.map((o) => `<tr><td>${o.id}</td><td>${o.patientName}</td><td>${money(o.total)}</td><td>${o.estimatedTreatmentEndDate || "-"}</td><td>${new Date(o.createdAt).toLocaleString()}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Sem pedidos.</div>'}`;
 }
 
 async function loadDeliveries() {
   const data = await apiFetch('/api/deliveries?page=1&pageSize=50');
-  byId('entregas').innerHTML = `<h2>Central de entregas</h2>${data.items.length ? `<table class="table"><thead><tr><th>Pedido</th><th>Paciente</th><th>Status</th></tr></thead><tbody>${data.items.map((d) => `<tr><td>${d.orderId}</td><td>${d.patientName}</td><td>${d.status}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Sem entregas.</div>'}`;
+  const deliveryItems = ensureArray(data.items);
+  byId('entregas').innerHTML = `<h2>Central de entregas</h2>${deliveryItems.length ? `<table class="table"><thead><tr><th>Pedido</th><th>Paciente</th><th>Status</th></tr></thead><tbody>${deliveryItems.map((d) => `<tr><td>${d.orderId}</td><td>${d.patientName}</td><td>${d.status}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Sem entregas.</div>'}`;
 }
 
 async function loadTickets() {
   const data = await apiFetch(`/api/tickets/${state.user.id}`);
-  byId('atendimento').innerHTML = `<h2>Atendimento</h2>${data.items.length ? data.items.map((t) => `<div class="card"><strong>${t.subject}</strong><p>Status: ${t.status}</p></div>`).join('') : '<div class="empty">Sem tickets.</div>'}`;
+  const ticketItems = ensureArray(data.items);
+  byId('atendimento').innerHTML = `<h2>Atendimento</h2>${ticketItems.length ? ticketItems.map((t) => `<div class="card"><strong>${t.subject}</strong><p>Status: ${t.status}</p></div>`).join('') : '<div class="empty">Sem tickets.</div>'}`;
 }
