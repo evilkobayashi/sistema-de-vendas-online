@@ -144,6 +144,47 @@ describe('4bio internal sales app', () => {
 
 
 
+
+
+  it('gera orçamento inteligente, impressão e produção com leitura de balança', async () => {
+    const token = await loginAs('4B-014', 'gerente123');
+
+    const formula = await request(app)
+      .post('/api/standard-formulas')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Formula Teste', version: 'v1', productId: 'm2', instructions: 'Misturar conforme POP.' });
+    expect(formula.status).toBe(201);
+
+    const budget = await request(app)
+      .post('/api/budgets')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ patientName: 'Paciente Orçamento', doctorName: 'Dr. Teste', prescriptionText: 'CardioPlus 10mg usar por 30 dias', estimatedDays: 30 });
+    expect(budget.status).toBe(201);
+
+    const manip = await request(app)
+      .get(`/api/budgets/${budget.body.item.id}/manipulation-order`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(manip.status).toBe(200);
+    expect(String(manip.body.printableText)).toContain('Ordem de Manipulação');
+
+    const labels = await request(app)
+      .get(`/api/budgets/${budget.body.item.id}/labels`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(labels.status).toBe(200);
+
+    const scale = await request(app)
+      .post('/api/scale/readings')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ quoteId: budget.body.item.id, medicineId: 'm2', expectedWeightGrams: 100, measuredWeightGrams: 101 });
+    expect(scale.status).toBe(201);
+
+    const production = await request(app)
+      .post('/api/production/standard-formula')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ formulaId: formula.body.item.id, batchSize: 2, operator: 'Operador 1' });
+    expect(production.status).toBe(201);
+  });
+
   it('processa entrada com conversão, XML NF-e, impressão e atualização automática de preço', async () => {
     const token = await loginAs('4B-014', 'gerente123');
 

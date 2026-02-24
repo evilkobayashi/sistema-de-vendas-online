@@ -1,4 +1,4 @@
-const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', doctors: [], selectedDoctorId: '', doctorsView: 'menu', employees: [], suppliers: [], finishedProducts: [], rawMaterials: [], standardFormulas: [], packagingFormulas: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
+const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', doctors: [], selectedDoctorId: '', doctorsView: 'menu', employees: [], suppliers: [], finishedProducts: [], rawMaterials: [], standardFormulas: [], packagingFormulas: [], budgets: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
 const byId = (id) => document.getElementById(id);
 const money = (v) => `R$ ${Number(v).toFixed(2)}`;
 const ensureArray = (v) => (Array.isArray(v) ? v : []);
@@ -63,12 +63,13 @@ byId('login-form').addEventListener('submit', async (e) => {
 });
 
 async function refreshAll() {
-  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers(), loadDoctors(), loadMasterData()]);
+  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers(), loadDoctors(), loadMasterData(), loadBudgets()]);
   renderPurchaseForm();
   renderCustomersModule();
   renderDoctorsModule();
   renderMasterDataModule();
   renderInventoryOpsModule();
+  renderOrcamentosModule();
 }
 
 async function loadDashboard() {
@@ -489,6 +490,7 @@ function bindCreateForm({ id, endpoint, onSuccess }) {
       await Promise.all([loadMasterData(), loadInventory(), loadCatalog(), loadDashboard()]);
       renderMasterDataModule();
       renderInventoryOpsModule();
+  renderOrcamentosModule();
       if (onSuccess) onSuccess();
       alert('Cadastro salvo com sucesso.');
     } catch (error) {
@@ -577,6 +579,64 @@ function renderInventoryOpsModule() {
         if (printOutput) printOutput.textContent = data.printableText || 'Laudo gerado.';
       } catch (error) {
         alert(error.message || 'Erro ao imprimir laudo de CQ');
+      }
+    });
+  }
+}
+
+
+async function loadBudgets() {
+  const data = await apiFetch('/api/budgets');
+  state.budgets = ensureArray(data.items);
+}
+
+function renderOrcamentosModule() {
+  const el = byId('orcamentos');
+  if (!el) return;
+
+  el.innerHTML = `
+    <h2>Orçamentos e produção</h2>
+    <div class="grid-form" style="grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 16px; margin-top: 16px;">
+      <form id="budget-form" class="grid-form card"><h3>Novo orçamento com receita inteligente</h3><input name="patientName" placeholder="Paciente" required/><input name="doctorName" placeholder="Médico"/><textarea name="prescriptionText" rows="4" placeholder="Texto da receita" required></textarea><input name="estimatedDays" type="number" min="1" value="30"/><button type="submit">Gerar orçamento inteligente</button></form>
+      <form id="scale-form" class="grid-form card"><h3>Balança monitorada integrada</h3><input name="quoteId" placeholder="ID do orçamento" required/><select name="medicineId" required>${state.medicines.map((m) => `<option value="${m.id}">${m.name}</option>`).join('')}</select><input name="expectedWeightGrams" type="number" min="0.01" step="0.01" placeholder="Peso esperado (g)" required/><input name="measuredWeightGrams" type="number" min="0.01" step="0.01" placeholder="Peso medido (g)" required/><button type="submit">Enviar leitura da balança</button></form>
+      <form id="production-form" class="grid-form card"><h3>Produção de fórmula padrão</h3><select name="formulaId" required>${state.standardFormulas.map((f) => `<option value="${f.id}">${f.name} (${f.version})</option>`).join('')}</select><input name="batchSize" type="number" min="1" value="1" required/><input name="operator" placeholder="Operador" required/><button type="submit">Criar ordem de produção</button></form>
+      <div class="card"><h3>Impressões do orçamento</h3><input id="budget-print-id" placeholder="ID do orçamento (ex: ORC-2025-0001)"/><div class="inline"><button type="button" id="print-manipulation-btn" class="quick-btn">Imprimir Ordem de Manipulação</button><button type="button" id="print-budget-label-btn" class="quick-btn">Imprimir rótulo</button></div><pre id="budget-print-output" class="empty">Sem impressão gerada.</pre></div>
+    </div>
+    <h3>Lista de orçamentos</h3>
+    ${state.budgets.length ? `<table class="table"><thead><tr><th>ID</th><th>Paciente</th><th>Médico</th><th>Itens sugeridos</th><th>Status</th></tr></thead><tbody>${state.budgets.map((b) => `<tr><td>${b.id}</td><td>${b.patientName}</td><td>${b.doctorName || '-'}</td><td>${ensureArray(b.suggestedItems).map((x) => x.medicineName).join(', ')}</td><td>${b.status}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Nenhum orçamento criado ainda.</div>'}
+  `;
+
+  bindCreateForm({ id: 'budget-form', endpoint: '/api/budgets', onSuccess: async () => { await loadBudgets(); renderOrcamentosModule(); } });
+  bindCreateForm({ id: 'scale-form', endpoint: '/api/scale/readings' });
+  bindCreateForm({ id: 'production-form', endpoint: '/api/production/standard-formula' });
+
+  const printIdInput = byId('budget-print-id');
+  const printOutput = byId('budget-print-output');
+  const manipBtn = byId('print-manipulation-btn');
+  const labelBtn = byId('print-budget-label-btn');
+
+  if (manipBtn) {
+    manipBtn.addEventListener('click', async () => {
+      try {
+        const id = (printIdInput?.value || '').trim();
+        if (!id) throw new Error('Informe o ID do orçamento.');
+        const data = await apiFetch(`/api/budgets/${id}/manipulation-order`);
+        if (printOutput) printOutput.textContent = data.printableText || 'Ordem gerada.';
+      } catch (error) {
+        alert(error.message || 'Erro ao imprimir ordem de manipulação');
+      }
+    });
+  }
+
+  if (labelBtn) {
+    labelBtn.addEventListener('click', async () => {
+      try {
+        const id = (printIdInput?.value || '').trim();
+        if (!id) throw new Error('Informe o ID do orçamento.');
+        const data = await apiFetch(`/api/budgets/${id}/labels`);
+        if (printOutput) printOutput.textContent = data.printableText || 'Rótulo gerado.';
+      } catch (error) {
+        alert(error.message || 'Erro ao imprimir rótulo');
       }
     });
   }

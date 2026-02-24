@@ -174,6 +174,26 @@ const inventoryNfeXmlSchema = z.object({
   conversionFactor: z.coerce.number().positive().default(1)
 });
 
+
+const budgetCreateSchema = z.object({
+  patientName: z.string().min(2),
+  doctorName: z.string().min(2).optional(),
+  prescriptionText: z.string().min(8),
+  estimatedDays: z.coerce.number().int().positive().default(30)
+});
+
+const scaleReadingSchema = z.object({
+  quoteId: z.string(),
+  medicineId: z.string(),
+  expectedWeightGrams: z.coerce.number().positive(),
+  measuredWeightGrams: z.coerce.number().positive()
+});
+
+const standardProductionSchema = z.object({
+  formulaId: z.string(),
+  batchSize: z.coerce.number().int().positive(),
+  operator: z.string().min(2)
+});
 const autoPricingSchema = z.object({
   percent: z.coerce.number().min(-50).max(200),
   specialty: z.string().optional(),
@@ -194,6 +214,11 @@ const medicineCreateSchema = z.object({
 type Session = { user: Omit<User, 'password'>; expiresAt: number };
 const sessions = new Map<string, Session>();
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+
+const budgets: Array<{ id: string; patientName: string; doctorName?: string; prescriptionText: string; suggestedItems: Array<{ medicineId: string; medicineName: string; confidence: number; quantitySuggestion: number }>; status: 'draft' | 'approved'; createdAt: string }> = [];
+const scaleReadings: Array<{ id: string; quoteId: string; medicineId: string; expectedWeightGrams: number; measuredWeightGrams: number; deviationPercent: number; status: 'ok' | 'alert'; createdAt: string }> = [];
+const productionOrders: Array<{ id: string; formulaId: string; batchSize: number; operator: string; status: 'planejada' | 'em_producao' | 'concluida'; createdAt: string }> = [];
+
 
 type AuthenticatedRequest = Request & { authUser: Omit<User, 'password'> };
 
@@ -855,6 +880,108 @@ export function createApp() {
 
     persistState();
     return res.json({ updated: impacted.length, items: impacted });
+  });
+
+
+  app.post('/api/budgets', (req: Request, res: Response) => {
+    const parsed = budgetCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const smart = parsePrescriptionToSuggestions(parsed.data.prescriptionText);
+    const suggestedItems = smart.suggestions.map((item) => ({
+      medicineId: item.medicineId,
+      medicineName: item.name,
+      confidence: item.confidence,
+      quantitySuggestion: parsed.data.estimatedDays >= 30 ? 2 : 1
+    }));
+
+    const budget = {
+      id: `ORC-${new Date().getFullYear()}-${String(budgets.length + 1).padStart(4, '0')}`,
+      patientName: parsed.data.patientName,
+      doctorName: parsed.data.doctorName,
+      prescriptionText: parsed.data.prescriptionText,
+      suggestedItems,
+      status: 'draft' as const,
+      createdAt: new Date().toISOString()
+    };
+
+    budgets.unshift(budget);
+    return res.status(201).json({ item: budget });
+  });
+
+  app.get('/api/budgets', (_req: Request, res: Response) => {
+    return res.json({ items: budgets });
+  });
+
+  app.get('/api/budgets/:budgetId/manipulation-order', (req: Request, res: Response) => {
+    const budget = budgets.find((x) => x.id === req.params.budgetId);
+    if (!budget) return res.status(404).json({ error: 'Orçamento não encontrado' });
+
+    const printableText = [
+      `Ordem de Manipulação: ${budget.id}`,
+      `Paciente: ${budget.patientName}`,
+      `Médico: ${budget.doctorName || 'N/I'}`,
+      'Itens sugeridos:',
+      ...budget.suggestedItems.map((x) => `- ${x.medicineName} (qtd sugerida ${x.quantitySuggestion})`)
+    ].join('\n');
+
+    return res.json({ item: budget, printableText });
+  });
+
+  app.get('/api/budgets/:budgetId/labels', (req: Request, res: Response) => {
+    const budget = budgets.find((x) => x.id === req.params.budgetId);
+    if (!budget) return res.status(404).json({ error: 'Orçamento não encontrado' });
+
+    const labels = budget.suggestedItems.map((item, index) => ({
+      labelId: `${budget.id}-LBL-${index + 1}`,
+      patientName: budget.patientName,
+      medicineName: item.medicineName,
+      createdAt: new Date().toISOString()
+    }));
+
+    return res.json({ items: labels, printableText: labels.map((x) => `${x.labelId} | ${x.patientName} | ${x.medicineName}`).join('\n') });
+  });
+
+  app.post('/api/scale/readings', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
+    const parsed = scaleReadingSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const deviationPercent = Number((((parsed.data.measuredWeightGrams - parsed.data.expectedWeightGrams) / parsed.data.expectedWeightGrams) * 100).toFixed(2));
+    const status: 'ok' | 'alert' = Math.abs(deviationPercent) <= 2 ? 'ok' : 'alert';
+
+    const reading = {
+      id: `BAL-${Date.now()}`,
+      quoteId: parsed.data.quoteId,
+      medicineId: parsed.data.medicineId,
+      expectedWeightGrams: parsed.data.expectedWeightGrams,
+      measuredWeightGrams: parsed.data.measuredWeightGrams,
+      deviationPercent,
+      status,
+      createdAt: new Date().toISOString()
+    };
+
+    scaleReadings.unshift(reading);
+    return res.status(201).json({ item: reading });
+  });
+
+  app.post('/api/production/standard-formula', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
+    const parsed = standardProductionSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const formula = listStandardFormulas().find((x) => x.id === parsed.data.formulaId);
+    if (!formula) return res.status(404).json({ error: 'Fórmula padrão não encontrada' });
+
+    const order = {
+      id: `PROD-${Date.now()}`,
+      formulaId: formula.id,
+      batchSize: parsed.data.batchSize,
+      operator: parsed.data.operator,
+      status: 'planejada' as const,
+      createdAt: new Date().toISOString()
+    };
+
+    productionOrders.unshift(order);
+    return res.status(201).json({ item: order, formula });
   });
 
   app.post('/api/orders', (req: Request, res: Response) => {
