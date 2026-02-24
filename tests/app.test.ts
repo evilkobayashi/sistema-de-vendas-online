@@ -85,6 +85,28 @@ describe('4bio internal sales app', () => {
     expect(blocked.body.error).toContain('Estoque insuficiente');
   });
 
+
+
+  it('calcula previsão de término do medicamento com base no consumo diário', async () => {
+    const token = await loginAs();
+    const response = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        patientName: 'Paciente Fórmula',
+        email: 'formula@example.com',
+        phone: '11999999666',
+        address: 'Rua H',
+        items: [{ medicineId: 'm2', quantity: 2, tabletsPerDay: 2, tabletsPerPackage: 30 }],
+        recurring: { discountPercent: 5 }
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.order.items[0].estimatedRunOutDate).toBeTruthy();
+    expect(response.body.order.estimatedTreatmentEndDate).toBeTruthy();
+    expect(response.body.order.recurring.nextBillingDate).toBe(response.body.order.estimatedTreatmentEndDate);
+  });
+
   it('mantém recorrência e confirmação', async () => {
     const token = await loginAs();
     const create = await request(app)

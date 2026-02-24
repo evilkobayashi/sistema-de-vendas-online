@@ -48,6 +48,8 @@ export type InventoryMovement = {
 export type OrderItem = {
   medicineId: string;
   quantity: number;
+  tabletsPerDay?: number;
+  tabletsPerPackage?: number;
 };
 
 export type Order = {
@@ -56,11 +58,12 @@ export type Order = {
   email: string;
   phone: string;
   address: string;
-  items: Array<OrderItem & { unitPrice: number; subtotal: number; medicineName: string }>;
+  items: Array<OrderItem & { unitPrice: number; subtotal: number; medicineName: string; estimatedRunOutDate?: string }>;
   total: number;
   controlledValidated: boolean;
   createdBy: string;
   createdAt: string;
+  estimatedTreatmentEndDate?: string;
   recurring?: {
     discountPercent: number;
     nextBillingDate: string;
@@ -111,7 +114,6 @@ export const inventoryLots: InventoryLot[] = [
 ];
 
 export const inventoryMovements: InventoryMovement[] = [];
-
 export const orders: Order[] = [];
 export const deliveries: Delivery[] = [];
 

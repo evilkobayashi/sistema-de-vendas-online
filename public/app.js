@@ -66,7 +66,7 @@ async function loadDashboard() {
       <div class="kpi"><div class="value">${money(data.indicators.totalSales)}</div><div>Total vendido</div></div>
     </div>
     <h3>Lembretes de recorrência</h3>
-    ${data.reminders.length ? data.reminders.map((x) => `<div class="card reminder"><strong>${x.orderId}</strong> • ${x.patientName}<br/>${x.message} (${x.nextBillingDate})<div class="inline"><button data-confirm-order="${x.orderId}" class="quick-btn">Confirmado</button></div></div>`).join('') : '<div class="empty">Sem lembretes.</div>'}
+    ${data.reminders.length ? data.reminders.map((x) => `<div class="card reminder"><strong>${x.orderId}</strong> • ${x.patientName}<br/>${x.message} (${x.nextBillingDate})${x.estimatedTreatmentEndDate ? `<br/>Término estimado do tratamento: ${x.estimatedTreatmentEndDate}` : ""}<div class="inline"><button data-confirm-order="${x.orderId}" class="quick-btn">Confirmado</button></div></div>`).join('') : '<div class="empty">Sem lembretes.</div>'}
   `;
   document.querySelectorAll('[data-confirm-order]').forEach((btn) => btn.addEventListener('click', async () => {
     await apiFetch(`/api/orders/${btn.dataset.confirmOrder}/recurring/confirm`, { method: 'PATCH' });
@@ -136,6 +136,8 @@ function renderPurchaseForm() {
       <input name="address" placeholder="Endereço" required/>
       <select name="medicineId" required>${state.medicines.map((m) => `<option value="${m.id}">${m.name} (${money(m.price)})</option>`)}</select>
       <input name="quantity" type="number" min="1" value="1" required/>
+      <input name="tabletsPerDay" type="number" min="0.1" step="0.1" placeholder="Comprimidos por dia"/>
+      <input name="tabletsPerPackage" type="number" min="1" step="1" value="30" placeholder="Comprimidos por caixa"/>
       <input name="prescriptionCode" placeholder="Receita (controlados)"/>
       <label><input type="checkbox" name="recurringEnabled"/> Compra recorrente</label>
       <input name="discountPercent" type="number" min="0" max="100" value="5"/>
@@ -148,12 +150,13 @@ function renderPurchaseForm() {
     const p = Object.fromEntries(new FormData(e.target).entries());
     const payload = {
       patientName: p.patientName, email: p.email, phone: p.phone, address: p.address, prescriptionCode: p.prescriptionCode || undefined,
-      items: [{ medicineId: p.medicineId, quantity: Number(p.quantity) }],
+      items: [{ medicineId: p.medicineId, quantity: Number(p.quantity), tabletsPerDay: p.tabletsPerDay ? Number(p.tabletsPerDay) : undefined, tabletsPerPackage: p.tabletsPerPackage ? Number(p.tabletsPerPackage) : undefined }],
       recurring: p.recurringEnabled === 'on' ? { discountPercent: Number(p.discountPercent || 0), nextBillingDate: p.nextBillingDate } : undefined
     };
     try {
       const data = await apiFetch('/api/orders', { method: 'POST', body: JSON.stringify(payload) });
-      alert(`Pedido ${data.order.id} criado (${money(data.order.total)})`);
+      const end = data.order.estimatedTreatmentEndDate ? ` • previsão de término: ${data.order.estimatedTreatmentEndDate}` : '';
+      alert(`Pedido ${data.order.id} criado (${money(data.order.total)})${end}`);
       await Promise.all([loadOrders(), loadDeliveries(), loadDashboard(), loadCatalog(), loadInventory()]);
       e.target.reset();
     } catch (error) { alert(error.message || 'Erro ao criar pedido'); }
@@ -162,7 +165,7 @@ function renderPurchaseForm() {
 
 async function loadOrders() {
   const data = await apiFetch('/api/orders?page=1&pageSize=50');
-  byId('pedidos').innerHTML = `<h2>Histórico de pedidos</h2>${data.items.length ? `<table class="table"><thead><tr><th>Pedido</th><th>Paciente</th><th>Total</th><th>Criado em</th></tr></thead><tbody>${data.items.map((o) => `<tr><td>${o.id}</td><td>${o.patientName}</td><td>${money(o.total)}</td><td>${new Date(o.createdAt).toLocaleString()}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Sem pedidos.</div>'}`;
+  byId('pedidos').innerHTML = `<h2>Histórico de pedidos</h2>${data.items.length ? `<table class="table"><thead><tr><th>Pedido</th><th>Paciente</th><th>Total</th><th>Término estimado</th><th>Criado em</th></tr></thead><tbody>${data.items.map((o) => `<tr><td>${o.id}</td><td>${o.patientName}</td><td>${money(o.total)}</td><td>${o.estimatedTreatmentEndDate || "-"}</td><td>${new Date(o.createdAt).toLocaleString()}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">Sem pedidos.</div>'}`;
 }
 
 async function loadDeliveries() {

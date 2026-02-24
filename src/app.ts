@@ -35,9 +35,16 @@ const saleSchema = z.object({
   email: z.string().email(),
   phone: z.string().min(8),
   address: z.string().min(5),
-  items: z.array(z.object({ medicineId: z.string(), quantity: z.number().int().positive() })).min(1),
+  items: z.array(
+    z.object({
+      medicineId: z.string(),
+      quantity: z.number().int().positive(),
+      tabletsPerDay: z.number().positive().optional(),
+      tabletsPerPackage: z.number().int().positive().optional()
+    })
+  ).min(1),
   prescriptionCode: z.string().optional(),
-  recurring: z.object({ discountPercent: z.number().min(0).max(100), nextBillingDate: z.string() }).optional()
+  recurring: z.object({ discountPercent: z.number().min(0).max(100), nextBillingDate: z.string().optional() }).optional()
 });
 
 const deliveryUpdateSchema = z.object({
@@ -116,6 +123,20 @@ function getDaysUntil(dateIso: string) {
   return Math.ceil((new Date(dateIso).getTime() - Date.now()) / (24 * 3600 * 1000));
 }
 
+function addDays(startIso: string, days: number) {
+  const dt = new Date(startIso);
+  dt.setDate(dt.getDate() + days);
+  return dt.toISOString().slice(0, 10);
+}
+
+function calculateRunOutDate(quantity: number, tabletsPerDay?: number, tabletsPerPackage?: number) {
+  if (!tabletsPerDay || tabletsPerDay <= 0) return undefined;
+  const unitsPerPackage = tabletsPerPackage ?? 30;
+  const totalTablets = quantity * unitsPerPackage;
+  const durationInDays = Math.max(1, Math.ceil(totalTablets / tabletsPerDay));
+  return addDays(new Date().toISOString(), durationInDays);
+}
+
 function buildRecurringReminders(items: Order[]) {
   return items
     .filter((o) => {
@@ -127,6 +148,7 @@ function buildRecurringReminders(items: Order[]) {
       orderId: o.id,
       patientName: o.patientName,
       nextBillingDate: o.recurring?.nextBillingDate,
+      estimatedTreatmentEndDate: o.estimatedTreatmentEndDate,
       message: 'Confirmar junto ao cliente a recorrência da compra'
     }));
 }
@@ -213,10 +235,10 @@ export function createApp() {
   const publicDir = resolvePublicDir();
   loadPersistentState();
 
-  app.get('/health/live', (_, res) => res.json({ status: 'ok' }));
-  app.get('/health/ready', (_, res) => res.json({ status: 'ready', sessions: sessions.size }));
+  app.get('/health/live', (_: Request, res: Response) => res.json({ status: 'ok' }));
+  app.get('/health/ready', (_: Request, res: Response) => res.json({ status: 'ready', sessions: sessions.size }));
 
-  app.post('/api/login', (req, res) => {
+  app.post('/api/login', (req: Request, res: Response) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Payload inválido' });
 
@@ -233,7 +255,7 @@ export function createApp() {
     return res.json({ token, expiresInMs: SESSION_TTL_MS, user: safeUser });
   });
 
-  app.post('/api/logout', authRequired, (req, res) => {
+  app.post('/api/logout', authRequired, (req: Request, res: Response) => {
     const authHeader = req.header('authorization');
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
     if (token) sessions.delete(token);
@@ -242,7 +264,7 @@ export function createApp() {
 
   app.use('/api', authRequired);
 
-  app.get('/api/medicines', (_req, res) => {
+  app.get('/api/medicines', (_req: Request, res: Response) => {
     const summary = buildInventorySummary();
     const inventoryMap = new Map(summary.items.map((x) => [x.medicineId, x]));
     const items = medicines.map((med) => ({ ...med, inventory: inventoryMap.get(med.id) }));
@@ -253,7 +275,7 @@ export function createApp() {
     return res.json({ items, specialties: [...new Set(medicines.map((m) => m.specialty))], labs: [...new Set(medicines.map((m) => m.lab))] });
   });
 
-  app.post('/api/medicines', authorize(['admin', 'gerente', 'inventario']), (req, res) => {
+  app.post('/api/medicines', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
     const parsed = medicineCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -273,20 +295,20 @@ export function createApp() {
     return res.status(201).json({ item: newMedicine });
   });
 
-  app.get('/api/inventory/summary', (req, res) => {
+  app.get('/api/inventory/summary', (req: Request, res: Response) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
     const summary = buildInventorySummary();
     return res.json({ ...summary, ...paginate(summary.items, pagination.data.page, pagination.data.pageSize) });
   });
 
-  app.get('/api/inventory/movements', (req, res) => {
+  app.get('/api/inventory/movements', (req: Request, res: Response) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
     return res.json(paginate(inventoryMovements, pagination.data.page, pagination.data.pageSize));
   });
 
-  app.post('/api/inventory/lots', authorize(['admin', 'gerente', 'inventario']), (req, res) => {
+  app.post('/api/inventory/lots', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
     const parsed = inventoryLotSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const authUser = getAuthUser(req);
@@ -322,7 +344,7 @@ export function createApp() {
     return res.status(201).json({ item: newLot });
   });
 
-  app.post('/api/orders', (req, res) => {
+  app.post('/api/orders', (req: Request, res: Response) => {
     const parsed = saleSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -332,13 +354,17 @@ export function createApp() {
     const meds = items.map((item) => {
       const med = medicines.find((m) => m.id === item.medicineId);
       if (!med) return null;
+      const estimatedRunOutDate = calculateRunOutDate(item.quantity, item.tabletsPerDay, item.tabletsPerPackage);
       return {
         medicineId: med.id,
         medicineName: med.name,
         quantity: item.quantity,
         unitPrice: med.price,
         subtotal: med.price * item.quantity,
-        controlled: med.controlled
+        controlled: med.controlled,
+        tabletsPerDay: item.tabletsPerDay,
+        tabletsPerPackage: item.tabletsPerPackage,
+        estimatedRunOutDate
       };
     });
 
@@ -367,6 +393,10 @@ export function createApp() {
       return res.status(400).json({ error: error instanceof Error ? error.message : 'Falha ao reservar estoque' });
     }
 
+    const treatmentDates = validMeds.map((m) => m.estimatedRunOutDate).filter(Boolean) as string[];
+    const estimatedTreatmentEndDate = treatmentDates.length ? treatmentDates.sort()[0] : undefined;
+    const nextBillingDate = recurring?.nextBillingDate || estimatedTreatmentEndDate;
+
     const order: Order = {
       id: orderId,
       patientName: parsed.data.patientName,
@@ -378,7 +408,8 @@ export function createApp() {
       controlledValidated: hasControlled,
       createdBy: authUser.id,
       createdAt: new Date().toISOString(),
-      recurring: recurring ? { ...recurring, needsConfirmation: true } : undefined
+      estimatedTreatmentEndDate,
+      recurring: recurring && nextBillingDate ? { discountPercent: recurring.discountPercent, nextBillingDate, needsConfirmation: true } : undefined
     };
 
     orders.unshift(order);
@@ -394,13 +425,13 @@ export function createApp() {
     return res.status(201).json({ order });
   });
 
-  app.get('/api/orders', (req, res) => {
+  app.get('/api/orders', (req: Request, res: Response) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
     return res.json(paginate(orders, pagination.data.page, pagination.data.pageSize));
   });
 
-  app.patch('/api/orders/:orderId/recurring/confirm', (req, res) => {
+  app.patch('/api/orders/:orderId/recurring/confirm', (req: Request, res: Response) => {
     const authUser = getAuthUser(req);
     const order = orders.find((o) => o.id === req.params.orderId);
     if (!order) return res.status(404).json({ error: 'Pedido não encontrado' });
@@ -413,7 +444,7 @@ export function createApp() {
     return res.json({ order });
   });
 
-  app.get('/api/deliveries', (req, res) => {
+  app.get('/api/deliveries', (req: Request, res: Response) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
 
@@ -426,7 +457,7 @@ export function createApp() {
     return res.json(paginate(filtered, pagination.data.page, pagination.data.pageSize));
   });
 
-  app.patch('/api/deliveries/:orderId', authorize(['admin', 'gerente']), (req, res) => {
+  app.patch('/api/deliveries/:orderId', authorize(['admin', 'gerente']), (req: Request, res: Response) => {
     const parsed = deliveryUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -438,7 +469,7 @@ export function createApp() {
     return res.json({ item: target });
   });
 
-  app.get('/api/tickets/:userId', (req, res) => {
+  app.get('/api/tickets/:userId', (req: Request, res: Response) => {
     const authUser = getAuthUser(req);
     if (authUser.role === 'operador' && authUser.id !== req.params.userId) return res.status(403).json({ error: 'Sem permissão para visualizar tickets de outro usuário' });
 
@@ -446,7 +477,7 @@ export function createApp() {
     return res.json({ items });
   });
 
-  app.get('/api/dashboard/:role?', (req, res) => {
+  app.get('/api/dashboard/:role?', (req: Request, res: Response) => {
     const authUser = getAuthUser(req);
     const totalSales = orders.reduce((acc, order) => acc + order.total, 0);
     const reminders = buildRecurringReminders(orders);
@@ -467,7 +498,7 @@ export function createApp() {
   });
 
   app.use(express.static(publicDir));
-  app.get('*', (_, res) => res.sendFile(path.join(publicDir, 'index.html')));
+  app.get('*', (_: Request, res: Response) => res.sendFile(path.join(publicDir, 'index.html')));
 
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     const message = err instanceof Error ? err.message : 'Erro interno';
