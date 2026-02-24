@@ -1,4 +1,4 @@
-const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [] };
+const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
 const byId = (id) => document.getElementById(id);
 const money = (v) => `R$ ${Number(v).toFixed(2)}`;
 const ensureArray = (v) => (Array.isArray(v) ? v : []);
@@ -95,10 +95,70 @@ function renderMedicineImage(medicine) {
 async function loadCatalog() {
   const data = await apiFetch('/api/medicines');
   state.medicines = ensureArray(data.items);
+
+  const specialties = [''].concat(ensureArray(data.specialties || [...new Set(state.medicines.map((m) => m.specialty))]));
+  const labs = [''].concat(ensureArray(data.labs || [...new Set(state.medicines.map((m) => m.lab))]));
+
+  const q = state.catalogFilters.q.trim().toLowerCase();
+  const specialty = state.catalogFilters.specialty;
+  const lab = state.catalogFilters.lab;
+  const sort = state.catalogFilters.sort;
+
+  const scored = state.medicines
+    .map((m) => {
+      const haystack = `${m.name} ${m.description} ${m.lab} ${m.specialty}`.toLowerCase();
+      let relevance = 0;
+      if (q) {
+        if (m.name.toLowerCase().includes(q)) relevance += 5;
+        if (m.description.toLowerCase().includes(q)) relevance += 2;
+        if (m.lab.toLowerCase().includes(q) || m.specialty.toLowerCase().includes(q)) relevance += 1;
+        if (haystack.includes(q)) relevance += 1;
+      }
+      return { ...m, relevance };
+    })
+    .filter((m) => (!q || m.relevance > 0) && (!specialty || m.specialty === specialty) && (!lab || m.lab === lab));
+
+  const items = [...scored].sort((a, b) => {
+    if (sort === 'price-asc') return a.price - b.price;
+    if (sort === 'price-desc') return b.price - a.price;
+    if (sort === 'name-asc') return a.name.localeCompare(b.name);
+    return b.relevance - a.relevance || a.name.localeCompare(b.name);
+  });
+
   byId('catalogo').innerHTML = `
     <h2>Catálogo farmacêutico</h2>
-    <div class="cards">${state.medicines.map((m) => `<article class="card">${renderMedicineImage(m)}<h3>${m.name}</h3><p>${m.description}</p><p>${m.lab} • ${m.specialty}</p><p>Disponível: <strong>${m.inventory?.stockAvailable ?? 0}</strong></p><strong>${money(m.price)}</strong></article>`).join('')}</div>
+    <div class="grid-form" style="grid-template-columns: 2fr 1fr 1fr 1fr; margin-bottom:12px;">
+      <input id="catalog-q" placeholder="Pesquisar por nome/descrição" value="${state.catalogFilters.q}" />
+      <select id="catalog-specialty">${specialties.map((x) => `<option value="${x}" ${x === specialty ? 'selected' : ''}>${x || 'Todas especialidades'}</option>`).join('')}</select>
+      <select id="catalog-lab">${labs.map((x) => `<option value="${x}" ${x === lab ? 'selected' : ''}>${x || 'Todos laboratórios'}</option>`).join('')}</select>
+      <select id="catalog-sort">
+        <option value="relevance" ${sort === 'relevance' ? 'selected' : ''}>Relevância</option>
+        <option value="price-asc" ${sort === 'price-asc' ? 'selected' : ''}>Menor preço</option>
+        <option value="price-desc" ${sort === 'price-desc' ? 'selected' : ''}>Maior preço</option>
+        <option value="name-asc" ${sort === 'name-asc' ? 'selected' : ''}>Nome (A-Z)</option>
+      </select>
+    </div>
+    <div class="cards">${items.map((m) => `<article class="card">${renderMedicineImage(m)}<h3>${m.name}</h3><p>${m.description}</p><p>${m.lab} • ${m.specialty}</p><p>Disponível: <strong>${m.inventory?.stockAvailable ?? 0}</strong></p><strong>${money(m.price)}</strong></article>`).join('')}</div>
+    ${items.length ? '' : '<div class="empty">Nenhum medicamento encontrado com os filtros atuais.</div>'}
   `;
+
+  const bind = (id, key) => {
+    const el = byId(id);
+    if (!el) return;
+    el.addEventListener('input', () => {
+      state.catalogFilters[key] = el.value;
+      loadCatalog();
+    });
+    el.addEventListener('change', () => {
+      state.catalogFilters[key] = el.value;
+      loadCatalog();
+    });
+  };
+
+  bind('catalog-q', 'q');
+  bind('catalog-specialty', 'specialty');
+  bind('catalog-lab', 'lab');
+  bind('catalog-sort', 'sort');
 }
 
 async function loadInventory() {
