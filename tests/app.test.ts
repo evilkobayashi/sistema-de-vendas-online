@@ -87,6 +87,21 @@ describe('4bio internal sales app', () => {
 
 
 
+
+  it('interpreta texto de pedido médico e sugere remédios do catálogo', async () => {
+    const token = await loginAs();
+
+    const parsed = await request(app)
+      .post('/api/prescriptions/parse')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ text: 'Paciente deve usar CardioPlus 10mg 1 comprimido ao dia. Se necessário, manter OncoRelief.' });
+
+    expect(parsed.status).toBe(200);
+    expect(parsed.body.found).toBe(true);
+    expect(parsed.body.suggestions.length).toBeGreaterThan(0);
+    expect(parsed.body.suggestions.some((x: { name: string }) => x.name.includes('CardioPlus'))).toBe(true);
+  });
+
   it('calcula previsão de término do medicamento com base no consumo diário', async () => {
     const token = await loginAs();
     const response = await request(app)

@@ -170,6 +170,21 @@ async function loadInventory() {
   }
 }
 
+
+function renderPrescriptionSuggestions(suggestions) {
+  const box = byId('prescription-suggestions');
+  if (!box) return;
+  const items = ensureArray(suggestions);
+  if (!items.length) {
+    box.innerHTML = '<div class="empty">Nenhum medicamento do catálogo foi identificado automaticamente.</div>';
+    return;
+  }
+
+  box.innerHTML = items
+    .map((item) => `<div class="card"><strong>${item.name}</strong><br/>Confiança: ${(item.confidence * 100).toFixed(0)}%${item.controlled ? ' • Controlado' : ''}<br/><small>${item.reason || ''}</small></div>`)
+    .join('');
+}
+
 function renderPurchaseForm() {
   byId('nova-venda').innerHTML = `
     <h2>Nova compra</h2>
@@ -182,13 +197,38 @@ function renderPurchaseForm() {
       <input name="quantity" type="number" min="1" value="1" required/>
       <input name="tabletsPerDay" type="number" min="0.1" step="0.1" placeholder="Comprimidos por dia"/>
       <input name="tabletsPerPackage" type="number" min="1" step="1" value="30" placeholder="Comprimidos por caixa"/>
-      <input name="prescriptionCode" placeholder="Receita (controlados)"/>
+      <input name="prescriptionCode" placeholder="Código da receita (controlados)"/>
+      <textarea name="prescriptionText" rows="4" placeholder="Cole aqui o texto do pedido médico para identificar remédios automaticamente"></textarea>
+      <div class="inline">
+        <button type="button" id="parse-prescription-btn" class="quick-btn">Ler pedido médico</button>
+      </div>
+      <div id="prescription-suggestions" class="stack"></div>
       <label><input type="checkbox" name="recurringEnabled"/> Compra recorrente</label>
       <input name="discountPercent" type="number" min="0" max="100" value="5"/>
       <input name="nextBillingDate" type="date"/>
       <button type="submit">Registrar</button>
     </form>
   `;
+  byId('parse-prescription-btn').addEventListener('click', async () => {
+    const form = byId('sale-form');
+    const payload = Object.fromEntries(new FormData(form).entries());
+    if (!payload.prescriptionText || String(payload.prescriptionText).trim().length < 8) {
+      alert('Adicione um texto de pedido médico com mais detalhes para leitura automática.');
+      return;
+    }
+
+    try {
+      const data = await apiFetch('/api/prescriptions/parse', { method: 'POST', body: JSON.stringify({ text: payload.prescriptionText }) });
+      renderPrescriptionSuggestions(data.suggestions);
+      const top = ensureArray(data.suggestions)[0];
+      if (top?.medicineId) {
+        form.querySelector('[name="medicineId"]').value = top.medicineId;
+      }
+    } catch (error) {
+      alert(error.message || 'Erro ao ler pedido médico');
+    }
+  });
+
   byId('sale-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const p = Object.fromEntries(new FormData(e.target).entries());

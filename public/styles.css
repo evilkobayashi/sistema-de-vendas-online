@@ -176,3 +176,14 @@ small { color: var(--muted); }
   .tabs { overflow-x: auto; }
   .brand { font-size: 24px; }
 }
+
+
+.stack {
+  display: grid;
+  gap: 8px;
+}
+
+textarea {
+  min-height: 92px;
+  resize: vertical;
+}

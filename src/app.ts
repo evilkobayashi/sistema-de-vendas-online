@@ -64,6 +64,10 @@ const inventoryLotSchema = z.object({
 
 const loginSchema = z.object({ employeeCode: z.string(), password: z.string() });
 const paginationSchema = z.object({ page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20) });
+const prescriptionParseSchema = z.object({
+  text: z.string().min(8).max(6000)
+});
+
 const medicineCreateSchema = z.object({
   name: z.string().min(3),
   price: z.coerce.number().positive(),
@@ -135,6 +139,49 @@ function calculateRunOutDate(quantity: number, tabletsPerDay?: number, tabletsPe
   const totalTablets = quantity * unitsPerPackage;
   const durationInDays = Math.max(1, Math.ceil(totalTablets / tabletsPerDay));
   return addDays(new Date().toISOString(), durationInDays);
+}
+
+function normalizeText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function parsePrescriptionToSuggestions(rawText: string) {
+  const text = normalizeText(rawText);
+  const suggestions = medicines
+    .map((medicine) => {
+      const name = normalizeText(medicine.name);
+      const lab = normalizeText(medicine.lab);
+      const tokens = [...new Set(name.split(' ').filter((t) => t.length >= 4))];
+      let score = 0;
+
+      if (text.includes(name)) score += 5;
+      if (text.includes(lab)) score += 1;
+      for (const token of tokens) {
+        if (text.includes(token)) score += 1;
+      }
+
+      return {
+        medicineId: medicine.id,
+        name: medicine.name,
+        controlled: medicine.controlled,
+        confidence: Math.min(0.99, score / 10),
+        reason: score > 0 ? `Termos compatíveis encontrados (${score})` : ''
+      };
+    })
+    .filter((item) => item.confidence > 0)
+    .sort((a, b) => b.confidence - a.confidence)
+    .slice(0, 5);
+
+  return {
+    suggestions,
+    found: suggestions.length > 0
+  };
 }
 
 function buildRecurringReminders(items: Order[]) {
@@ -293,6 +340,15 @@ export function createApp() {
     medicines.unshift(newMedicine);
     persistState();
     return res.status(201).json({ item: newMedicine });
+  });
+
+
+  app.post('/api/prescriptions/parse', (req: Request, res: Response) => {
+    const parsed = prescriptionParseSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const result = parsePrescriptionToSuggestions(parsed.data.text);
+    return res.json(result);
   });
 
   app.get('/api/inventory/summary', (req: Request, res: Response) => {
