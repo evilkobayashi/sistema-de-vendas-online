@@ -296,6 +296,45 @@ function addDays(startIso: string, days: number) {
   return dt.toISOString().slice(0, 10);
 }
 
+
+function isSameMonthCompetence(a: string, b: string) {
+  const da = new Date(a);
+  const db = new Date(b);
+  return da.getUTCFullYear() === db.getUTCFullYear() && da.getUTCMonth() === db.getUTCMonth();
+}
+
+function firstDayNextMonth(dateIso: string) {
+  const dt = new Date(dateIso);
+  dt.setUTCMonth(dt.getUTCMonth() + 1, 1);
+  dt.setUTCHours(0, 0, 0, 0);
+  return dt.toISOString().slice(0, 10);
+}
+
+function getLastDeliveredDateForPatient(patientId: string) {
+  const delivered = deliveries
+    .filter((d) => d.patientId === patientId && d.status === 'entregue')
+    .map((d) => d.forecastDate)
+    .filter(Boolean)
+    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+
+  return delivered[0];
+}
+
+function computePatientEligibility(patientId: string) {
+  const lastDeliveryDate = getLastDeliveredDateForPatient(patientId);
+  if (!lastDeliveryDate) {
+    return { lastDeliveryDate: undefined, canOrderThisMonth: true, nextEligibleDate: new Date().toISOString().slice(0, 10) };
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const sameMonth = isSameMonthCompetence(lastDeliveryDate, today);
+  return {
+    lastDeliveryDate,
+    canOrderThisMonth: !sameMonth,
+    nextEligibleDate: sameMonth ? firstDayNextMonth(lastDeliveryDate) : today
+  };
+}
+
 function calculateRunOutDate(quantity: number, tabletsPerDay?: number, tabletsPerPackage?: number, treatmentDays?: number) {
   if (treatmentDays && treatmentDays > 0) return addDays(new Date().toISOString(), treatmentDays);
   if (!tabletsPerDay || tabletsPerDay <= 0) return undefined;
@@ -679,6 +718,16 @@ export function createApp() {
     return res.json(listPatientActivities(req.params.patientId, pagination.data.page, pagination.data.pageSize));
   });
 
+
+
+
+  app.get('/api/patients/:patientId/eligibility', (req: Request, res: Response) => {
+    const patient = getCustomerById(req.params.patientId);
+    if (!patient) return res.status(404).json({ error: 'Paciente não encontrado' });
+
+    const eligibility = computePatientEligibility(patient.id);
+    return res.json(eligibility);
+  });
 
 
 
@@ -1195,6 +1244,14 @@ export function createApp() {
       if (!doctorExists || !healthPlanExists) {
         return res.status(400).json({ error: 'Paciente com referência inválida de médico/plano de saúde.' });
       }
+
+      const eligibility = computePatientEligibility(customer.id);
+      if (!eligibility.canOrderThisMonth) {
+        return res.status(400).json({
+          error: `Paciente já possui entrega realizada na competência atual. Próxima data elegível: ${eligibility.nextEligibleDate}`,
+          eligibility
+        });
+      }
     }
 
     const meds = items.map((item) => {
@@ -1250,6 +1307,7 @@ export function createApp() {
       email: customer?.email || parsed.data.email,
       phone: customer?.phone || parsed.data.phone,
       address: customer?.address || parsed.data.address,
+      patientId: customer?.id,
       items: validMeds.map(({ controlled, ...rest }) => rest),
       total,
       controlledValidated: hasControlled,
@@ -1275,6 +1333,7 @@ export function createApp() {
     deliveries.unshift({
       orderId: order.id,
       patientName: order.patientName,
+      patientId: customer?.id,
       status: 'pendente',
       forecastDate: addDays(new Date().toISOString(), shipment.etaDays),
       carrier: shipment.provider,
@@ -1327,6 +1386,9 @@ export function createApp() {
     if (!target) return res.status(404).json({ error: 'Entrega não encontrada' });
 
     Object.assign(target, parsed.data);
+    if (parsed.data.status === 'entregue' && !parsed.data.forecastDate) {
+      target.forecastDate = new Date().toISOString().slice(0, 10);
+    }
 
     const order = orders.find((o) => o.id === target.orderId);
     const linkedPatient = order ? listCustomers().find((c) => c.name === order.patientName && c.email === order.email) : undefined;

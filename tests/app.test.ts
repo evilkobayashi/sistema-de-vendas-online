@@ -387,6 +387,76 @@ describe('4bio internal sales app', () => {
 
 
 
+
+
+  it('retorna elegibilidade do paciente e bloqueia novo pedido no mesmo mês após entrega', async () => {
+    const token = await loginAs('4B-014', 'gerente123');
+    const refs = await createDoctorAndPlan(token);
+
+    const patient = await request(app)
+      .post('/api/patients')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Paciente Elegibilidade',
+        patientCode: 'PAC-ELIG',
+        insuranceCardCode: 'CARD-ELIG',
+        healthPlanId: refs.healthPlanId,
+        doctorId: refs.doctorId,
+        diseaseCid: 'E00',
+        email: 'elig@example.com',
+        phone: '11955554444',
+        address: 'Rua Elegível, 1'
+      });
+    expect(patient.status).toBe(201);
+
+    const before = await request(app)
+      .get(`/api/patients/${patient.body.item.id}/eligibility`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(before.status).toBe(200);
+    expect(before.body.canOrderThisMonth).toBe(true);
+
+    const order = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        customerId: patient.body.item.id,
+        patientName: 'fallback',
+        email: 'fallback@example.com',
+        phone: '111111111',
+        address: 'fallback',
+        items: [{ medicineId: 'm2', quantity: 1 }]
+      });
+    expect(order.status).toBe(201);
+
+    const delivered = await request(app)
+      .patch(`/api/deliveries/${order.body.order.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'entregue' });
+    expect(delivered.status).toBe(200);
+
+    const after = await request(app)
+      .get(`/api/patients/${patient.body.item.id}/eligibility`)
+      .set('Authorization', `Bearer ${token}`);
+    expect(after.status).toBe(200);
+    expect(after.body.canOrderThisMonth).toBe(false);
+    expect(after.body.lastDeliveryDate).toBeTruthy();
+    expect(after.body.nextEligibleDate).toBeTruthy();
+
+    const blocked = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        customerId: patient.body.item.id,
+        patientName: 'fallback',
+        email: 'fallback@example.com',
+        phone: '111111111',
+        address: 'fallback',
+        items: [{ medicineId: 'm2', quantity: 1 }]
+      });
+    expect(blocked.status).toBe(400);
+    expect(String(blocked.body.error)).toContain('competência atual');
+  });
+
   it('dispara contato por call/email com retries e registra histórico', async () => {
     const token = await loginAs('4B-014', 'gerente123');
     const refs = await createDoctorAndPlan(token);

@@ -747,6 +747,28 @@ function renderHealthPlansModule() {
   }
 }
 
+
+async function loadPatientEligibility(patientId) {
+  if (!patientId) return { canOrderThisMonth: true };
+  return apiFetch(`/api/patients/${patientId}/eligibility`);
+}
+
+function renderPatientEligibility(info) {
+  const box = byId('sale-eligibility');
+  if (!box) return;
+  if (!info || info.canOrderThisMonth === undefined) {
+    box.innerHTML = '<div class="empty">Selecione um paciente para validar elegibilidade mensal.</div>';
+    return;
+  }
+
+  if (info.canOrderThisMonth) {
+    box.innerHTML = `<div class="card"><strong>Elegibilidade:</strong> paciente apto para novo pedido nesta competência.${info.lastDeliveryDate ? `<br/><small>Última entrega: ${info.lastDeliveryDate}</small>` : ''}</div>`;
+    return;
+  }
+
+  box.innerHTML = `<div class="card" style="border-left:4px solid #d32f2f;"><strong>Elegibilidade:</strong> bloqueado para novo pedido neste mês.<br/><small>Última entrega: ${info.lastDeliveryDate || '-'} • Próxima data elegível: ${info.nextEligibleDate || '-'}</small></div>`;
+}
+
 function renderPurchaseForm() {
   byId('nova-venda').innerHTML = `
     <h2>Nova compra</h2>
@@ -783,6 +805,7 @@ function renderPurchaseForm() {
       <input name="nextBillingDate" type="date"/>
       <button type="submit">Registrar</button>
     </form>
+    <section id="sale-eligibility" class="stack"></section>
     <section id="sale-forecast" class="stack"></section>
   `;
 
@@ -791,7 +814,7 @@ function renderPurchaseForm() {
 
   if (customerSelect) {
     if (state.customers.length && !customerSelect.value) customerSelect.value = state.customers[0].id;
-    customerSelect.addEventListener('change', () => {
+    customerSelect.addEventListener('change', async () => {
       const selected = state.customers.find((c) => c.id === customerSelect.value);
       if (!selected) return;
       form.querySelector('[name="patientName"]').value = selected.name;
@@ -805,10 +828,13 @@ function renderPurchaseForm() {
       form.querySelector('[name="healthPlanName"]').value = hp ? `${hp.name} • ${hp.providerName}` : (selected.insurancePlanName || '');
       form.querySelector('[name="doctorName"]').value = dr ? dr.name : (selected.primaryDoctorId || '');
       form.querySelector('[name="diseaseCid"]').value = selected.diseaseCid || '';
+      const eligibility = await loadPatientEligibility(selected.id);
+      renderPatientEligibility(eligibility);
       renderTreatmentForecast(form);
     });
   }
 
+  renderPatientEligibility(undefined);
   customerSelect?.dispatchEvent(new Event('change'));
 
   byId('create-customer-btn').addEventListener('click', async () => {
@@ -923,6 +949,11 @@ function renderPurchaseForm() {
       recurring: p.recurringEnabled === 'on' ? { discountPercent: Number(p.discountPercent || 0), nextBillingDate: p.nextBillingDate } : undefined
     };
     try {
+      if (p.customerId) {
+        const eligibility = await loadPatientEligibility(String(p.customerId));
+        renderPatientEligibility(eligibility);
+        if (!eligibility.canOrderThisMonth) throw new Error(`Paciente já recebeu entrega nesta competência. Próxima data elegível: ${eligibility.nextEligibleDate}`);
+      }
       const data = await apiFetch('/api/orders', { method: 'POST', body: JSON.stringify(payload) });
       const end = data.order.estimatedTreatmentEndDate ? ` • previsão de término: ${data.order.estimatedTreatmentEndDate}` : '';
       alert(`Pedido ${data.order.id} criado (${money(data.order.total)})${end}`);

@@ -59,6 +59,7 @@ export type Order = {
   email: string;
   phone: string;
   address: string;
+  patientId?: string;
   items: Array<OrderItem & { unitPrice: number; subtotal: number; medicineName: string; estimatedRunOutDate?: string }>;
   total: number;
   controlledValidated: boolean;
@@ -79,6 +80,7 @@ export type DeliveryStatus = 'pendente' | 'em_rota' | 'entregue';
 export type Delivery = {
   orderId: string;
   patientName: string;
+  patientId?: string;
   status: DeliveryStatus;
   forecastDate: string;
   carrier: string;
