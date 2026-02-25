@@ -385,6 +385,61 @@ describe('4bio internal sales app', () => {
 
 
 
+
+
+  it('dispara contato por call/email com retries e registra histórico', async () => {
+    const token = await loginAs('4B-014', 'gerente123');
+    const refs = await createDoctorAndPlan(token);
+
+    const patient = await request(app)
+      .post('/api/patients')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Paciente Contato',
+        patientCode: 'PAC-CONT',
+        insuranceCardCode: 'CARD-CONT',
+        healthPlanId: refs.healthPlanId,
+        doctorId: refs.doctorId,
+        diseaseCid: 'C10',
+        email: 'contato@example.com',
+        phone: '11977770000',
+        address: 'Rua Contato, 10'
+      });
+
+    expect(patient.status).toBe(201);
+
+    const okCall = await request(app)
+      .post(`/api/patients/${patient.body.item.id}/contact`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ type: 'call', message: 'Contato para confirmar entrega.' });
+
+    expect(okCall.status).toBe(200);
+
+    const okEmail = await request(app)
+      .post(`/api/patients/${patient.body.item.id}/contact`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ type: 'email', subject: 'Envio de boleto', message: 'Segue boleto em anexo.' });
+
+    expect(okEmail.status).toBe(200);
+
+    process.env.COMM_FORCE_FAIL = 'call';
+    const failCall = await request(app)
+      .post(`/api/patients/${patient.body.item.id}/contact`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ type: 'call', message: 'Tentativa com falha.' });
+    expect(failCall.status).toBe(502);
+    process.env.COMM_FORCE_FAIL = '';
+
+    const activities = await request(app)
+      .get(`/api/patients/${patient.body.item.id}/activities?page=1&pageSize=100`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(activities.status).toBe(200);
+    expect(activities.body.items.some((x: { activityType: string }) => x.activityType === 'contact_success_call')).toBe(true);
+    expect(activities.body.items.some((x: { activityType: string }) => x.activityType === 'contact_success_email')).toBe(true);
+    expect(activities.body.items.some((x: { activityType: string }) => x.activityType === 'contact_failed_call')).toBe(true);
+  });
+
   it('gera histórico automático de atividades do paciente', async () => {
     const token = await loginAs('4B-014', 'gerente123');
     const refs = await createDoctorAndPlan(token);

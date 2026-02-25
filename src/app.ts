@@ -21,6 +21,7 @@ import {
 import { loadPersistentState, persistState } from './store.js';
 import { createCustomer, createDoctor, createEmployee, createFinishedProduct, createHealthPlan, createPackagingFormula, createPatientActivity, createRawMaterial, createStandardFormula, createSupplier, getCustomerById, getDoctorById, getHealthPlanById, initDatabase, listCustomers, listDoctors, listEmployees, listFinishedProducts, listHealthPlans, listPackagingFormulas, listPatientActivities, listRawMaterials, listStandardFormulas, listSuppliers, updateCustomer, updateDoctor, updateHealthPlan } from './database.js';
 import { createShipmentWithFallback, quoteWithFallback } from './shipping.js';
+import { dialerProvider, emailProvider, executeWithRetries } from './communications.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,6 +80,14 @@ const prescriptionDocumentSchema = z.object({
   filename: z.string().min(3),
   mimeType: z.string().min(3),
   contentBase64: z.string().min(16)
+});
+
+
+const patientContactSchema = z.object({
+  type: z.enum(['call', 'email']),
+  subject: z.string().min(2).optional(),
+  message: z.string().min(2).optional(),
+  metadata: z.record(z.unknown()).optional()
 });
 
 const shippingQuoteSchema = z.object({
@@ -670,6 +679,70 @@ export function createApp() {
     return res.json(listPatientActivities(req.params.patientId, pagination.data.page, pagination.data.pageSize));
   });
 
+
+
+
+  app.post('/api/patients/:patientId/contact', async (req: Request, res: Response) => {
+    const patient = getCustomerById(req.params.patientId);
+    if (!patient) return res.status(404).json({ error: 'Paciente não encontrado' });
+
+    const parsed = patientContactSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const authUser = getAuthUser(req);
+    const destination = parsed.data.type === 'email' ? patient.email : patient.phone;
+    if (!destination) return res.status(400).json({ error: 'Paciente sem destino válido para contato' });
+
+    const requestPayload = {
+      patientId: patient.id,
+      channel: parsed.data.type,
+      destination,
+      subject: parsed.data.subject,
+      message: parsed.data.message,
+      metadata: parsed.data.metadata
+    } as const;
+
+    const result = await executeWithRetries(
+      async () => {
+        if (parsed.data.type === 'call') return dialerProvider.sendCall(requestPayload);
+        return emailProvider.sendEmail(requestPayload);
+      },
+      {
+        retries: 2,
+        waitMs: 50,
+        onAttemptError: async (attempt, error) => {
+          logPatientActivity({
+            patientId: patient.id,
+            activityType: `contact_attempt_${parsed.data.type}`,
+            description: `Tentativa ${attempt} de contato (${parsed.data.type}) falhou: ${error.message}`,
+            metadata: { attempt, type: parsed.data.type, destination },
+            performedBy: authUser.id
+          });
+        }
+      }
+    );
+
+    if (!result.ok) {
+      logPatientActivity({
+        patientId: patient.id,
+        activityType: `contact_failed_${parsed.data.type}`,
+        description: `Contato ${parsed.data.type} falhou após ${result.attempt} tentativa(s).`,
+        metadata: { attempts: result.attempt, type: parsed.data.type, destination },
+        performedBy: authUser.id
+      });
+      return res.status(502).json({ error: 'Falha ao processar contato com paciente', attempts: result.attempt });
+    }
+
+    logPatientActivity({
+      patientId: patient.id,
+      activityType: `contact_success_${parsed.data.type}`,
+      description: `Contato ${parsed.data.type} enviado com sucesso para ${destination}.`,
+      metadata: { attempts: result.attempt, type: parsed.data.type, destination, provider: result.result.provider, externalId: result.result.externalId },
+      performedBy: authUser.id
+    });
+
+    return res.json({ ok: true, attempts: result.attempt, item: result.result });
+  });
 
 
   app.get('/api/health-plans', (req: Request, res: Response) => {
