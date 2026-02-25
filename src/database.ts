@@ -5,6 +5,12 @@ import Database from 'better-sqlite3';
 export type Customer = {
   id: string;
   name: string;
+  patientCode: string;
+  insuranceCardCode: string;
+  insurancePlanName: string;
+  insuranceProviderName: string;
+  diseaseCid: string;
+  primaryDoctorId: string;
   email: string;
   phone: string;
   address: string;
@@ -99,6 +105,12 @@ export function initDatabase() {
     CREATE TABLE IF NOT EXISTS customers (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
+      patient_code TEXT NOT NULL DEFAULT '',
+      insurance_card_code TEXT NOT NULL DEFAULT '',
+      insurance_plan_name TEXT NOT NULL DEFAULT '',
+      insurance_provider_name TEXT NOT NULL DEFAULT '',
+      disease_cid TEXT NOT NULL DEFAULT '',
+      primary_doctor_id TEXT NOT NULL DEFAULT '',
       email TEXT NOT NULL,
       phone TEXT NOT NULL,
       address TEXT NOT NULL,
@@ -106,6 +118,8 @@ export function initDatabase() {
     );
     CREATE INDEX IF NOT EXISTS idx_customers_name ON customers(name);
     CREATE INDEX IF NOT EXISTS idx_customers_email ON customers(email);
+    CREATE INDEX IF NOT EXISTS idx_customers_patient_code ON customers(patient_code);
+    CREATE INDEX IF NOT EXISTS idx_customers_insurance_card_code ON customers(insurance_card_code);
 
     CREATE TABLE IF NOT EXISTS doctors (
       id TEXT PRIMARY KEY,
@@ -184,32 +198,51 @@ export function initDatabase() {
     );
     CREATE INDEX IF NOT EXISTS idx_packaging_formulas_name ON packaging_formulas(name);
   `);
+
+  ensureCustomerColumn('patient_code', "TEXT NOT NULL DEFAULT ''");
+  ensureCustomerColumn('insurance_card_code', "TEXT NOT NULL DEFAULT ''");
+  ensureCustomerColumn('insurance_plan_name', "TEXT NOT NULL DEFAULT ''");
+  ensureCustomerColumn('insurance_provider_name', "TEXT NOT NULL DEFAULT ''");
+  ensureCustomerColumn('disease_cid', "TEXT NOT NULL DEFAULT ''");
+  ensureCustomerColumn('primary_doctor_id', "TEXT NOT NULL DEFAULT ''");
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customers_patient_code ON customers(patient_code);');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customers_insurance_card_code ON customers(insurance_card_code);');
+
   return db;
+}
+
+
+function ensureCustomerColumn(columnName: string, columnSpec: string) {
+  const conn = initDatabase();
+  const columns = conn.prepare('PRAGMA table_info(customers)').all() as Array<{ name: string }>;
+  if (!columns.some((c) => c.name === columnName)) {
+    conn.exec(`ALTER TABLE customers ADD COLUMN ${columnName} ${columnSpec}`);
+  }
 }
 
 export function listCustomers(search?: string) {
   const conn = initDatabase();
   if (search?.trim()) {
     const q = `%${search.trim()}%`;
-    return conn.prepare(`SELECT id,name,email,phone,address,created_at as createdAt FROM customers WHERE name LIKE ? OR email LIKE ? OR phone LIKE ? ORDER BY name ASC`).all(q, q, q) as Customer[];
+    return conn.prepare(`SELECT id,name,patient_code as patientCode,insurance_card_code as insuranceCardCode,insurance_plan_name as insurancePlanName,insurance_provider_name as insuranceProviderName,disease_cid as diseaseCid,primary_doctor_id as primaryDoctorId,email,phone,address,created_at as createdAt FROM customers WHERE name LIKE ? OR email LIKE ? OR phone LIKE ? OR patient_code LIKE ? OR insurance_card_code LIKE ? ORDER BY name ASC`).all(q, q, q, q, q) as Customer[];
   }
-  return conn.prepare('SELECT id,name,email,phone,address,created_at as createdAt FROM customers ORDER BY name ASC').all() as Customer[];
+  return conn.prepare('SELECT id,name,patient_code as patientCode,insurance_card_code as insuranceCardCode,insurance_plan_name as insurancePlanName,insurance_provider_name as insuranceProviderName,disease_cid as diseaseCid,primary_doctor_id as primaryDoctorId,email,phone,address,created_at as createdAt FROM customers ORDER BY name ASC').all() as Customer[];
 }
 
 export function getCustomerById(id: string) {
-  return initDatabase().prepare('SELECT id,name,email,phone,address,created_at as createdAt FROM customers WHERE id = ?').get(id) as Customer | undefined;
+  return initDatabase().prepare('SELECT id,name,patient_code as patientCode,insurance_card_code as insuranceCardCode,insurance_plan_name as insurancePlanName,insurance_provider_name as insuranceProviderName,disease_cid as diseaseCid,primary_doctor_id as primaryDoctorId,email,phone,address,created_at as createdAt FROM customers WHERE id = ?').get(id) as Customer | undefined;
 }
 
 export function createCustomer(input: Omit<Customer, 'id' | 'createdAt'>) {
   const item: Customer = { id: makeId('c'), ...input, createdAt: new Date().toISOString() };
-  initDatabase().prepare('INSERT INTO customers (id,name,email,phone,address,created_at) VALUES (?,?,?,?,?,?)').run(item.id, item.name, item.email, item.phone, item.address, item.createdAt);
+  initDatabase().prepare('INSERT INTO customers (id,name,patient_code,insurance_card_code,insurance_plan_name,insurance_provider_name,disease_cid,primary_doctor_id,email,phone,address,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(item.id, item.name, item.patientCode, item.insuranceCardCode, item.insurancePlanName, item.insuranceProviderName, item.diseaseCid, item.primaryDoctorId, item.email, item.phone, item.address, item.createdAt);
   return item;
 }
 
 export function updateCustomer(id: string, input: Omit<Customer, 'id' | 'createdAt'>) {
   const exists = getCustomerById(id);
   if (!exists) return undefined;
-  initDatabase().prepare('UPDATE customers SET name=?,email=?,phone=?,address=? WHERE id=?').run(input.name, input.email, input.phone, input.address, id);
+  initDatabase().prepare('UPDATE customers SET name=?,patient_code=?,insurance_card_code=?,insurance_plan_name=?,insurance_provider_name=?,disease_cid=?,primary_doctor_id=?,email=?,phone=?,address=? WHERE id=?').run(input.name, input.patientCode, input.insuranceCardCode, input.insurancePlanName, input.insuranceProviderName, input.diseaseCid, input.primaryDoctorId, input.email, input.phone, input.address, id);
   return getCustomerById(id);
 }
 

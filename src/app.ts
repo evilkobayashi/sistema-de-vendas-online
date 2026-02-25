@@ -89,6 +89,12 @@ const shippingQuoteSchema = z.object({
 
 const customerCreateSchema = z.object({
   name: z.string().min(2),
+  patientCode: z.string().min(2),
+  insuranceCardCode: z.string().min(2),
+  insurancePlanName: z.string().min(2),
+  insuranceProviderName: z.string().min(2),
+  diseaseCid: z.string().min(2),
+  primaryDoctorId: z.string().min(2),
   email: z.string().email(),
   phone: z.string().min(8),
   address: z.string().min(5)
@@ -570,6 +576,39 @@ export function createApp() {
     if (!item) return res.status(404).json({ error: 'Cliente não encontrado' });
     return res.json({ item });
   });
+
+
+  app.get('/api/patients', (req: Request, res: Response) => {
+    const q = req.query.q?.toString();
+    const items = listCustomers(q);
+    return res.json({ items });
+  });
+
+  app.post('/api/patients', (req: Request, res: Response) => {
+    const parsed = customerCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const item = createCustomer(parsed.data);
+    return res.status(201).json({ item });
+  });
+
+  app.patch('/api/patients/:patientId', (req: Request, res: Response) => {
+    const parsed = customerUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const item = updateCustomer(req.params.patientId, parsed.data);
+    if (!item) return res.status(404).json({ error: 'Paciente não encontrado' });
+    return res.json({ item });
+  });
+
+
+  app.get('/api/patients/:patientId', (req: Request, res: Response) => {
+    const item = getCustomerById(req.params.patientId);
+    if (!item) return res.status(404).json({ error: 'Paciente não encontrado' });
+    return res.json({ item });
+  });
+
+
 
   app.get('/api/doctors', (req: Request, res: Response) => {
     const q = req.query.q?.toString();

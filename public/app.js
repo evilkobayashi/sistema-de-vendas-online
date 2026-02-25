@@ -296,7 +296,7 @@ function renderTreatmentForecast(form) {
 }
 
 async function loadCustomers() {
-  const data = await apiFetch('/api/customers');
+  const data = await apiFetch('/api/patients');
   state.customers = ensureArray(data.items);
   if (state.selectedCustomerId && !state.customers.some((c) => c.id === state.selectedCustomerId)) {
     state.selectedCustomerId = '';
@@ -308,24 +308,30 @@ function renderCustomersModule() {
   const selected = state.customers.find((c) => c.id === state.selectedCustomerId);
 
   byId('clientes').innerHTML = `
-    <h2>Clientes cadastrados</h2>
+    <h2>Pacientes cadastrados</h2>
     <div class="grid-form" style="grid-template-columns: 1fr 1fr; gap: 16px;">
       <div>
-        <h3>Menu de clientes</h3>
-        ${state.customers.length ? `<div class="stack">${state.customers.map((c) => `<button class="quick-btn" data-open-customer="${c.id}">${c.name} • ${c.phone}</button>`).join('')}</div>` : '<div class="empty">Nenhum cliente cadastrado.</div>'}
+        <h3>Menu de pacientes</h3>
+        ${state.customers.length ? `<div class="stack">${state.customers.map((c) => `<button class="quick-btn" data-open-customer="${c.id}">${c.name} • ${c.patientCode || "sem código"}</button>`).join('')}</div>` : '<div class="empty">Nenhum paciente cadastrado.</div>'}
       </div>
       <div>
-        <h3>Dados do cliente</h3>
+        <h3>Dados do paciente</h3>
         ${selected ? `
           <form id="customer-edit-form" class="grid-form" data-customer-id="${selected.id}">
             <input name="name" value="${selected.name}" required />
+            <input name="patientCode" value="${selected.patientCode || ""}" placeholder="Código do paciente" required />
+            <input name="insuranceCardCode" value="${selected.insuranceCardCode || ""}" placeholder="Código da carteirinha" required />
+            <input name="insurancePlanName" value="${selected.insurancePlanName || ""}" placeholder="Nome do plano" required />
+            <input name="insuranceProviderName" value="${selected.insuranceProviderName || ""}" placeholder="Operadora do plano" required />
+            <input name="diseaseCid" value="${selected.diseaseCid || ""}" placeholder="CID" required />
+            <input name="primaryDoctorId" value="${selected.primaryDoctorId || ""}" placeholder="ID do médico" required />
             <input name="email" type="email" value="${selected.email}" required />
             <input name="phone" value="${selected.phone}" required />
             <input name="address" value="${selected.address}" required />
             <button type="submit">Salvar alterações</button>
           </form>
           <small>ID: ${selected.id}</small>
-        ` : '<div class="empty">Selecione um cliente no menu para visualizar/editar.</div>'}
+        ` : '<div class="empty">Selecione um paciente no menu para visualizar/editar.</div>'}
       </div>
     </div>
   `;
@@ -344,13 +350,13 @@ function renderCustomersModule() {
       const customerId = form.getAttribute('data-customer-id');
       const payload = Object.fromEntries(new FormData(form).entries());
       try {
-        await apiFetch(`/api/customers/${customerId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+        await apiFetch(`/api/patients/${customerId}`, { method: 'PATCH', body: JSON.stringify(payload) });
         await loadCustomers();
         renderCustomersModule();
         renderPurchaseForm();
-        alert('Informações do cliente salvas com sucesso.');
+        alert('Informações do paciente salvas com sucesso.');
       } catch (error) {
-        alert(error.message || 'Erro ao salvar cliente');
+        alert(error.message || 'Erro ao salvar paciente');
       }
     });
   }
@@ -646,13 +652,17 @@ function renderPurchaseForm() {
   byId('nova-venda').innerHTML = `
     <h2>Nova compra</h2>
     <form id="sale-form" class="grid-form">
-      <select name="customerId" id="sale-customer"><option value="">Cliente avulso (sem cadastro)</option>${state.customers.map((c) => `<option value="${c.id}">${c.name} • ${c.phone}</option>`).join('')}</select>
-      <input name="patientName" placeholder="Paciente" required/>
-      <input name="email" type="email" placeholder="E-mail" required/>
-      <input name="phone" placeholder="Telefone" required/>
-      <input name="address" placeholder="Endereço" required/>
+      <select name="customerId" id="sale-customer"><option value="">Selecione um paciente</option>${state.customers.map((c) => `<option value="${c.id}">${c.name} • ${c.patientCode || c.phone}</option>`).join('')}</select>
+      <input name="patientName" placeholder="Paciente" required readonly/>
+      <input name="email" type="email" placeholder="E-mail" required readonly/>
+      <input name="phone" placeholder="Telefone" required readonly/>
+      <input name="address" placeholder="Endereço" required readonly/>
+      <input name="patientCode" placeholder="Código do paciente" readonly/>
+      <input name="insuranceCardCode" placeholder="Carteirinha" readonly/>
+      <input name="insurancePlanName" placeholder="Plano" readonly/>
+      <input name="diseaseCid" placeholder="CID" readonly/>
       <div class="inline" style="grid-column:1 / -1;">
-        <button type="button" id="create-customer-btn" class="quick-btn">Cadastrar cliente com os dados acima</button>
+        <button type="button" id="create-customer-btn" class="quick-btn">Cadastrar paciente com os dados acima</button>
       </div>
       <select name="medicineId" required>${state.medicines.map((m) => `<option value="${m.id}">${m.name} (${money(m.price)})</option>`).join('')}</select>
       <input name="quantity" type="number" min="1" value="1" required/>
@@ -680,6 +690,7 @@ function renderPurchaseForm() {
   const customerSelect = byId('sale-customer');
 
   if (customerSelect) {
+    if (state.customers.length && !customerSelect.value) customerSelect.value = state.customers[0].id;
     customerSelect.addEventListener('change', () => {
       const selected = state.customers.find((c) => c.id === customerSelect.value);
       if (!selected) return;
@@ -687,29 +698,41 @@ function renderPurchaseForm() {
       form.querySelector('[name="email"]').value = selected.email;
       form.querySelector('[name="phone"]').value = selected.phone;
       form.querySelector('[name="address"]').value = selected.address;
+      form.querySelector('[name="patientCode"]').value = selected.patientCode || '';
+      form.querySelector('[name="insuranceCardCode"]').value = selected.insuranceCardCode || '';
+      form.querySelector('[name="insurancePlanName"]').value = selected.insurancePlanName || '';
+      form.querySelector('[name="diseaseCid"]').value = selected.diseaseCid || '';
       renderTreatmentForecast(form);
     });
   }
+
+  customerSelect?.dispatchEvent(new Event('change'));
 
   byId('create-customer-btn').addEventListener('click', async () => {
     const payload = {
       name: form.querySelector('[name="patientName"]').value,
       email: form.querySelector('[name="email"]').value,
       phone: form.querySelector('[name="phone"]').value,
-      address: form.querySelector('[name="address"]').value
+      address: form.querySelector('[name="address"]').value,
+      patientCode: `PAC-${Date.now().toString().slice(-6)}`,
+      insuranceCardCode: 'PREENCHER',
+      insurancePlanName: 'PREENCHER',
+      insuranceProviderName: 'PREENCHER',
+      diseaseCid: 'PREENCHER',
+      primaryDoctorId: 'PREENCHER'
     };
 
     try {
-      const data = await apiFetch('/api/customers', { method: 'POST', body: JSON.stringify(payload) });
+      const data = await apiFetch('/api/patients', { method: 'POST', body: JSON.stringify(payload) });
       state.customers = [data.item, ...state.customers];
       state.selectedCustomerId = data.item.id;
       const current = data.item.id;
       renderPurchaseForm();
       renderCustomersModule();
       byId('sale-customer').value = current;
-      alert('Cliente cadastrado com sucesso.');
+      alert('Paciente cadastrado com sucesso.');
     } catch (error) {
-      alert(error.message || 'Erro ao cadastrar cliente');
+      alert(error.message || 'Erro ao cadastrar paciente');
     }
   });
 
