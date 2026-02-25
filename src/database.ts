@@ -37,6 +37,18 @@ export type HealthPlan = {
   createdAt: string;
 };
 
+
+export type PatientActivity = {
+  id: string;
+  patientId: string;
+  activityType: string;
+  description: string;
+  metadataJson: string;
+  performedBy: string;
+  createdAt: string;
+};
+
+
 export type Employee = {
   id: string;
   name: string;
@@ -153,6 +165,19 @@ export function initDatabase() {
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_health_plans_name ON health_plans(name);
+
+
+    CREATE TABLE IF NOT EXISTS patient_activities (
+      id TEXT PRIMARY KEY,
+      patient_id TEXT NOT NULL,
+      activity_type TEXT NOT NULL,
+      description TEXT NOT NULL,
+      metadata_json TEXT NOT NULL,
+      performed_by TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_patient_activities_patient_id ON patient_activities(patient_id);
+    CREATE INDEX IF NOT EXISTS idx_patient_activities_created_at ON patient_activities(created_at);
 
     CREATE TABLE IF NOT EXISTS employees (
       id TEXT PRIMARY KEY,
@@ -322,6 +347,41 @@ export function updateHealthPlan(id: string, input: Omit<HealthPlan, 'id' | 'cre
   if (!exists) return undefined;
   initDatabase().prepare('UPDATE health_plans SET name=?,provider_name=?,registration_code=? WHERE id=?').run(input.name, input.providerName, input.registrationCode, id);
   return getHealthPlanById(id);
+}
+
+
+export function createPatientActivity(input: Omit<PatientActivity, 'id' | 'createdAt'>) {
+  const item: PatientActivity = {
+    id: makeId('act'),
+    ...input,
+    createdAt: new Date().toISOString()
+  };
+
+  initDatabase()
+    .prepare('INSERT INTO patient_activities (id,patient_id,activity_type,description,metadata_json,performed_by,created_at) VALUES (?,?,?,?,?,?,?)')
+    .run(item.id, item.patientId, item.activityType, item.description, item.metadataJson, item.performedBy, item.createdAt);
+
+  return item;
+}
+
+export function listPatientActivities(patientId: string, page = 1, pageSize = 20) {
+  const conn = initDatabase();
+  const totalRow = conn
+    .prepare('SELECT COUNT(*) as total FROM patient_activities WHERE patient_id = ?')
+    .get(patientId) as { total: number };
+
+  const offset = (page - 1) * pageSize;
+  const items = conn
+    .prepare('SELECT id,patient_id as patientId,activity_type as activityType,description,metadata_json as metadataJson,performed_by as performedBy,created_at as createdAt FROM patient_activities WHERE patient_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?')
+    .all(patientId, pageSize, offset) as PatientActivity[];
+
+  return {
+    items,
+    page,
+    pageSize,
+    total: totalRow?.total || 0,
+    totalPages: Math.max(1, Math.ceil((totalRow?.total || 0) / pageSize))
+  };
 }
 
 export function listEmployees(search?: string) {

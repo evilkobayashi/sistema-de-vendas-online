@@ -19,7 +19,7 @@ import {
   type User
 } from './data.js';
 import { loadPersistentState, persistState } from './store.js';
-import { createCustomer, createDoctor, createEmployee, createFinishedProduct, createHealthPlan, createPackagingFormula, createRawMaterial, createStandardFormula, createSupplier, getCustomerById, getDoctorById, getHealthPlanById, initDatabase, listCustomers, listDoctors, listEmployees, listFinishedProducts, listHealthPlans, listPackagingFormulas, listRawMaterials, listStandardFormulas, listSuppliers, updateCustomer, updateDoctor, updateHealthPlan } from './database.js';
+import { createCustomer, createDoctor, createEmployee, createFinishedProduct, createHealthPlan, createPackagingFormula, createPatientActivity, createRawMaterial, createStandardFormula, createSupplier, getCustomerById, getDoctorById, getHealthPlanById, initDatabase, listCustomers, listDoctors, listEmployees, listFinishedProducts, listHealthPlans, listPackagingFormulas, listPatientActivities, listRawMaterials, listStandardFormulas, listSuppliers, updateCustomer, updateDoctor, updateHealthPlan } from './database.js';
 import { createShipmentWithFallback, quoteWithFallback } from './shipping.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -567,6 +567,16 @@ export function createApp() {
     return { doctor, healthPlan };
   }
 
+  function logPatientActivity(input: { patientId: string; activityType: string; description: string; metadata?: Record<string, unknown>; performedBy?: string }) {
+    createPatientActivity({
+      patientId: input.patientId,
+      activityType: input.activityType,
+      description: input.description,
+      metadataJson: JSON.stringify(input.metadata || {}),
+      performedBy: input.performedBy || 'system'
+    });
+  }
+
   app.get('/api/customers', (req: Request, res: Response) => {
     const q = req.query.q?.toString();
     const items = listCustomers(q);
@@ -581,6 +591,8 @@ export function createApp() {
     if ('error' in refs) return res.status(400).json({ error: refs.error });
 
     const item = createCustomer(parsed.data);
+    const authUser = getAuthUser(req);
+    logPatientActivity({ patientId: item.id, activityType: 'patient_created', description: 'Cadastro de paciente criado.', metadata: { source: 'customers' }, performedBy: authUser.id });
     return res.status(201).json({ item });
   });
 
@@ -599,6 +611,8 @@ export function createApp() {
 
     const item = updateCustomer(req.params.customerId, parsed.data);
     if (!item) return res.status(404).json({ error: 'Cliente não encontrado' });
+    const authUser = getAuthUser(req);
+    logPatientActivity({ patientId: item.id, activityType: 'patient_updated', description: 'Cadastro de paciente atualizado.', metadata: { source: 'customers' }, performedBy: authUser.id });
     return res.json({ item });
   });
 
@@ -617,6 +631,8 @@ export function createApp() {
     if ('error' in refs) return res.status(400).json({ error: refs.error });
 
     const item = createCustomer(parsed.data);
+    const authUser = getAuthUser(req);
+    logPatientActivity({ patientId: item.id, activityType: 'patient_created', description: 'Cadastro de paciente criado.', metadata: { source: 'patients' }, performedBy: authUser.id });
     return res.status(201).json({ item });
   });
 
@@ -629,6 +645,8 @@ export function createApp() {
 
     const item = updateCustomer(req.params.patientId, parsed.data);
     if (!item) return res.status(404).json({ error: 'Paciente não encontrado' });
+    const authUser = getAuthUser(req);
+    logPatientActivity({ patientId: item.id, activityType: 'patient_updated', description: 'Cadastro de paciente atualizado.', metadata: { source: 'patients' }, performedBy: authUser.id });
     return res.json({ item });
   });
 
@@ -639,6 +657,18 @@ export function createApp() {
     return res.json({ item });
   });
 
+
+
+
+  app.get('/api/patients/:patientId/activities', (req: Request, res: Response) => {
+    const patient = getCustomerById(req.params.patientId);
+    if (!patient) return res.status(404).json({ error: 'Paciente não encontrado' });
+
+    const pagination = paginationSchema.safeParse(req.query);
+    if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
+
+    return res.json(listPatientActivities(req.params.patientId, pagination.data.page, pagination.data.pageSize));
+  });
 
 
 
@@ -1158,6 +1188,10 @@ export function createApp() {
 
     orders.unshift(order);
 
+    if (customerId) {
+      logPatientActivity({ patientId: customerId, activityType: 'order_created', description: `Pedido ${order.id} criado.`, metadata: { orderId: order.id, total: order.total }, performedBy: authUser.id });
+    }
+
     const shipment = createShipmentWithFallback({
       orderId: order.id,
       destinationZip: order.address,
@@ -1220,6 +1254,14 @@ export function createApp() {
     if (!target) return res.status(404).json({ error: 'Entrega não encontrada' });
 
     Object.assign(target, parsed.data);
+
+    const order = orders.find((o) => o.id === target.orderId);
+    const linkedPatient = order ? listCustomers().find((c) => c.name === order.patientName && c.email === order.email) : undefined;
+    if (linkedPatient) {
+      const authUser = getAuthUser(req);
+      logPatientActivity({ patientId: linkedPatient.id, activityType: 'delivery_updated', description: `Entrega ${target.orderId} atualizada para status ${target.status}.`, metadata: { orderId: target.orderId, status: target.status }, performedBy: authUser.id });
+    }
+
     persistState();
     return res.json({ item: target });
   });

@@ -383,6 +383,61 @@ describe('4bio internal sales app', () => {
     expect(updated.body.item.insuranceCardCode).toBe('CARD-901');
   });
 
+
+
+  it('gera histórico automático de atividades do paciente', async () => {
+    const token = await loginAs('4B-014', 'gerente123');
+    const refs = await createDoctorAndPlan(token);
+
+    const createdPatient = await request(app)
+      .post('/api/patients')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Paciente Histórico',
+        patientCode: 'PAC-HIST',
+        insuranceCardCode: 'CARD-HIST',
+        healthPlanId: refs.healthPlanId,
+        doctorId: refs.doctorId,
+        diseaseCid: 'H00',
+        email: 'hist@example.com',
+        phone: '11988887777',
+        address: 'Rua Histórico, 1'
+      });
+
+    expect(createdPatient.status).toBe(201);
+
+    const createdOrder = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        customerId: createdPatient.body.item.id,
+        patientName: 'fallback',
+        email: 'fallback@example.com',
+        phone: '111111111',
+        address: 'fallback',
+        items: [{ medicineId: 'm2', quantity: 1 }]
+      });
+
+    expect(createdOrder.status).toBe(201);
+
+    const updatedDelivery = await request(app)
+      .patch(`/api/deliveries/${createdOrder.body.order.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'em_rota' });
+
+    expect(updatedDelivery.status).toBe(200);
+
+    const activities = await request(app)
+      .get(`/api/patients/${createdPatient.body.item.id}/activities?page=1&pageSize=20`)
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(activities.status).toBe(200);
+    expect(Array.isArray(activities.body.items)).toBe(true);
+    expect(activities.body.items.some((x: { activityType: string }) => x.activityType === 'patient_created')).toBe(true);
+    expect(activities.body.items.some((x: { activityType: string }) => x.activityType === 'order_created')).toBe(true);
+    expect(activities.body.items.some((x: { activityType: string }) => x.activityType === 'delivery_updated')).toBe(true);
+  });
+
   it('permite criar pedido usando customerId cadastrado', async () => {
     const token = await loginAs();
     const refs = await createDoctorAndPlan(token);

@@ -1,4 +1,4 @@
-const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', doctors: [], selectedDoctorId: '', doctorsView: 'menu', employees: [], suppliers: [], finishedProducts: [], rawMaterials: [], standardFormulas: [], packagingFormulas: [], healthPlans: [], selectedHealthPlanId: '', budgets: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
+const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', doctors: [], selectedDoctorId: '', doctorsView: 'menu', employees: [], suppliers: [], finishedProducts: [], rawMaterials: [], standardFormulas: [], packagingFormulas: [], healthPlans: [], selectedHealthPlanId: '', patientActivities: [], budgets: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
 const byId = (id) => document.getElementById(id);
 const money = (v) => `R$ ${Number(v).toFixed(2)}`;
 const ensureArray = (v) => (Array.isArray(v) ? v : []);
@@ -65,6 +65,7 @@ byId('login-form').addEventListener('submit', async (e) => {
 async function refreshAll() {
   await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers(), loadDoctors(), loadMasterData(), loadHealthPlans(), loadBudgets()]);
   renderPurchaseForm();
+  if (state.selectedCustomerId) await loadPatientActivities(state.selectedCustomerId);
   renderCustomersModule();
   renderDoctorsModule();
   renderMasterDataModule();
@@ -305,6 +306,17 @@ async function loadCustomers() {
 }
 
 
+
+async function loadPatientActivities(patientId, page = 1, pageSize = 20) {
+  if (!patientId) {
+    state.patientActivities = [];
+    return { items: [], page, pageSize, total: 0, totalPages: 1 };
+  }
+  const data = await apiFetch(`/api/patients/${patientId}/activities?page=${page}&pageSize=${pageSize}`);
+  state.patientActivities = ensureArray(data.items);
+  return data;
+}
+
 function renderCustomersModule() {
   const selected = state.customers.find((c) => c.id === state.selectedCustomerId);
 
@@ -334,14 +346,17 @@ function renderCustomersModule() {
             <button type="submit">Salvar alterações</button>
           </form>
           <small>ID: ${selected.id}</small>
+          <h4 style="margin-top:12px">Histórico de ações</h4>
+          <div id="patient-activities" class="stack">${state.patientActivities.length ? state.patientActivities.map((a) => `<div class=\"card\"><strong>${a.activityType}</strong><br/>${a.description}<br/><small>${new Date(a.createdAt).toLocaleString()} • ${a.performedBy}</small></div>`).join('') : '<div class=\"empty\">Sem atividades registradas.</div>'}</div>
         ` : '<div class="empty">Selecione um paciente no menu para visualizar/editar.</div>'}
       </div>
     </div>
   `;
 
   document.querySelectorAll('[data-open-customer]').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       state.selectedCustomerId = btn.getAttribute('data-open-customer') || '';
+      await loadPatientActivities(state.selectedCustomerId);
       renderCustomersModule();
     });
   });
@@ -355,6 +370,7 @@ function renderCustomersModule() {
       try {
         await apiFetch(`/api/patients/${customerId}`, { method: 'PATCH', body: JSON.stringify(payload) });
         await loadCustomers();
+        await loadPatientActivities(customerId || '');
         renderCustomersModule();
         renderPurchaseForm();
         alert('Informações do paciente salvas com sucesso.');
@@ -818,6 +834,7 @@ function renderPurchaseForm() {
       state.selectedCustomerId = data.item.id;
       const current = data.item.id;
       renderPurchaseForm();
+      await loadPatientActivities(current);
       renderCustomersModule();
       byId('sale-customer').value = current;
       alert('Paciente cadastrado com sucesso.');
