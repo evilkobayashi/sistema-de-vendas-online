@@ -743,4 +743,75 @@ describe('4bio internal sales app', () => {
     expect(confirm.status).toBe(200);
     expect(confirm.body.order.recurring.needsConfirmation).toBe(false);
   });
+
+  it('expõe feature flags para rollout controlado', async () => {
+    const token = await loginAs('4B-014', 'gerente123');
+    const response = await request(app)
+      .get('/api/feature-flags')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveProperty('patients_v2');
+    expect(response.body).toHaveProperty('eligibility_guard');
+    expect(response.body).toHaveProperty('communications');
+  });
+
+  it('coleta métricas operacionais de bloqueio por competência', async () => {
+    const token = await loginAs('4B-014', 'gerente123');
+    const refs = await createDoctorAndPlan(token);
+
+    const patient = await request(app)
+      .post('/api/patients')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        name: 'Paciente Métrica',
+        patientCode: 'PAC-METRIC',
+        insuranceCardCode: 'CARD-METRIC',
+        healthPlanId: refs.healthPlanId,
+        doctorId: refs.doctorId,
+        diseaseCid: 'M00',
+        email: 'metric@example.com',
+        phone: '11988887777',
+        address: 'Rua Métrica, 50'
+      });
+    expect(patient.status).toBe(201);
+
+    const order = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        customerId: patient.body.item.id,
+        patientName: 'fallback',
+        email: 'fallback@example.com',
+        phone: '111111111',
+        address: 'fallback',
+        items: [{ medicineId: 'm2', quantity: 1 }]
+      });
+    expect(order.status).toBe(201);
+
+    await request(app)
+      .patch(`/api/deliveries/${order.body.order.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ status: 'entregue' });
+
+    const blocked = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        customerId: patient.body.item.id,
+        patientName: 'fallback',
+        email: 'fallback@example.com',
+        phone: '111111111',
+        address: 'fallback',
+        items: [{ medicineId: 'm2', quantity: 1 }]
+      });
+    expect(blocked.status).toBe(400);
+
+    const metrics = await request(app)
+      .get('/api/metrics/operational')
+      .set('Authorization', `Bearer ${token}`);
+    expect(metrics.status).toBe(200);
+    expect(metrics.body.eligibilityBlocks).toBeGreaterThan(0);
+  });
+
 });

@@ -1,4 +1,4 @@
-const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', doctors: [], selectedDoctorId: '', doctorsView: 'menu', employees: [], suppliers: [], finishedProducts: [], rawMaterials: [], standardFormulas: [], packagingFormulas: [], healthPlans: [], selectedHealthPlanId: '', patientActivities: [], budgets: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
+const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', doctors: [], selectedDoctorId: '', doctorsView: 'menu', employees: [], suppliers: [], finishedProducts: [], rawMaterials: [], standardFormulas: [], packagingFormulas: [], healthPlans: [], selectedHealthPlanId: '', patientActivities: [], budgets: [], metrics: null, customerModuleView: 'v2', featureFlags: { patients_v2: true, eligibility_guard: true, communications: true }, catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
 const byId = (id) => document.getElementById(id);
 const money = (v) => `R$ ${Number(v).toFixed(2)}`;
 const ensureArray = (v) => (Array.isArray(v) ? v : []);
@@ -27,6 +27,24 @@ async function apiFetch(url, options = {}) {
   }
 
   return payload;
+}
+
+
+async function loadFeatureFlags() {
+  try {
+    const flags = await apiFetch('/api/feature-flags');
+    state.featureFlags = { ...state.featureFlags, ...flags };
+  } catch {
+    state.featureFlags = { patients_v2: true, eligibility_guard: true, communications: true };
+  }
+}
+
+async function loadOperationalMetrics() {
+  try {
+    state.metrics = await apiFetch('/api/metrics/operational');
+  } catch {
+    state.metrics = null;
+  }
 }
 
 function activateTab(tab) {
@@ -63,7 +81,8 @@ byId('login-form').addEventListener('submit', async (e) => {
 });
 
 async function refreshAll() {
-  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers(), loadDoctors(), loadMasterData(), loadHealthPlans(), loadBudgets()]);
+  await loadFeatureFlags();
+  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers(), loadDoctors(), loadMasterData(), loadHealthPlans(), loadBudgets(), loadOperationalMetrics()]);
   renderPurchaseForm();
   if (state.selectedCustomerId) await loadPatientActivities(state.selectedCustomerId);
   renderCustomersModule();
@@ -85,6 +104,8 @@ async function loadDashboard() {
       <div class="kpi"><div class="value">${data.indicators.lotesProximosVencimento}</div><div>Lotes próximos ao vencimento</div></div>
       <div class="kpi"><div class="value">${money(data.indicators.totalSales)}</div><div>Total vendido</div></div>
     </div>
+    <h3>Métricas operacionais</h3>
+    ${state.metrics ? `<div class="cards"><article class="card"><strong>Falhas de contato</strong><br/>Call: ${state.metrics.contactFailures?.call || 0}<br/>Email: ${state.metrics.contactFailures?.email || 0}</article><article class="card"><strong>Bloqueios por competência</strong><br/>${state.metrics.eligibilityBlocks || 0}</article><article class="card"><strong>Latências médias (ms)</strong><br/>Discador: ${state.metrics.integrationLatency?.dialerAvgMs || 0}<br/>E-mail: ${state.metrics.integrationLatency?.emailAvgMs || 0}<br/>Frete(cotação): ${state.metrics.integrationLatency?.shippingQuoteAvgMs || 0}<br/>Frete(criação): ${state.metrics.integrationLatency?.shippingCreateAvgMs || 0}</article></div>` : '<div class="empty">Métricas indisponíveis para este perfil.</div>'}
     <h3>Lembretes de recorrência</h3>
     ${ensureArray(data.reminders).length ? ensureArray(data.reminders).map((x) => `<div class="card reminder"><strong>${x.orderId}</strong> • ${x.patientName}<br/>${x.message} (${x.nextBillingDate})${x.estimatedTreatmentEndDate ? `<br/>Término estimado do tratamento: ${x.estimatedTreatmentEndDate}` : ""}<div class="inline"><button data-confirm-order="${x.orderId}" class="quick-btn">Confirmado</button></div></div>`).join('') : '<div class="empty">Sem lembretes.</div>'}
   `;
@@ -298,7 +319,8 @@ function renderTreatmentForecast(form) {
 }
 
 async function loadCustomers() {
-  const data = await apiFetch('/api/patients');
+  const endpoint = state.featureFlags.patients_v2 ? '/api/patients' : '/api/customers';
+  const data = await apiFetch(endpoint);
   state.customers = ensureArray(data.items);
   if (state.selectedCustomerId && !state.customers.some((c) => c.id === state.selectedCustomerId)) {
     state.selectedCustomerId = '';
@@ -312,6 +334,10 @@ async function loadPatientActivities(patientId, page = 1, pageSize = 20) {
     state.patientActivities = [];
     return { items: [], page, pageSize, total: 0, totalPages: 1 };
   }
+  if (!state.featureFlags.patients_v2) {
+    state.patientActivities = [];
+    return { items: [], page, pageSize, total: 0, totalPages: 1 };
+  }
   const data = await apiFetch(`/api/patients/${patientId}/activities?page=${page}&pageSize=${pageSize}`);
   state.patientActivities = ensureArray(data.items);
   return data;
@@ -320,11 +346,18 @@ async function loadPatientActivities(patientId, page = 1, pageSize = 20) {
 function renderCustomersModule() {
   const selected = state.customers.find((c) => c.id === state.selectedCustomerId);
 
-  byId('clientes').innerHTML = `
-    <h2>Pacientes cadastrados</h2>
+  const renderLegacyPanel = () => `
+    <div class="card">
+      <h3>Legado (clientes)</h3>
+      ${state.customers.length ? `<ul>${state.customers.map((c) => `<li>${c.name} • ${c.email}</li>`).join('')}</ul>` : '<div class="empty">Sem dados.</div>'}
+      <small>Tela legada mantida em paralelo durante estabilização.</small>
+    </div>
+  `;
+
+  const renderV2Panel = () => `
     <div class="grid-form" style="grid-template-columns: 1fr 1fr; gap: 16px;">
       <div>
-        <h3>Menu de pacientes</h3>
+        <h3>Menu de pacientes (V2)</h3>
         ${state.customers.length ? `<div class="stack">${state.customers.map((c) => `<button class="quick-btn" data-open-customer="${c.id}">${c.name} • ${c.patientCode || "sem código"}</button>`).join('')}</div>` : '<div class="empty">Nenhum paciente cadastrado.</div>'}
       </div>
       <div>
@@ -347,11 +380,28 @@ function renderCustomersModule() {
           </form>
           <small>ID: ${selected.id}</small>
           <h4 style="margin-top:12px">Histórico de ações</h4>
-          <div id="patient-activities" class="stack">${state.patientActivities.length ? state.patientActivities.map((a) => `<div class=\"card\"><strong>${a.activityType}</strong><br/>${a.description}<br/><small>${new Date(a.createdAt).toLocaleString()} • ${a.performedBy}</small></div>`).join('') : '<div class=\"empty\">Sem atividades registradas.</div>'}</div>
+          <div id="patient-activities" class="stack">${state.patientActivities.length ? state.patientActivities.map((a) => `<div class="card"><strong>${a.activityType}</strong><br/>${a.description}<br/><small>${new Date(a.createdAt).toLocaleString()} • ${a.performedBy}</small></div>`).join('') : '<div class="empty">Sem atividades registradas.</div>'}</div>
         ` : '<div class="empty">Selecione um paciente no menu para visualizar/editar.</div>'}
       </div>
     </div>
   `;
+
+  byId('clientes').innerHTML = `
+    <h2>Pacientes cadastrados</h2>
+    <div class="inline" style="margin-bottom: 12px;">
+      <button class="quick-btn" data-customer-module-view="v2">Tela nova (patients_v2)</button>
+      <button class="quick-btn" data-customer-module-view="legacy">Tela legada (customers)</button>
+    </div>
+    ${state.customerModuleView === 'legacy' || !state.featureFlags.patients_v2 ? renderLegacyPanel() : renderV2Panel()}
+    ${state.featureFlags.patients_v2 ? renderLegacyPanel() : ''}
+  `;
+
+  document.querySelectorAll('[data-customer-module-view]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.customerModuleView = btn.getAttribute('data-customer-module-view') || 'v2';
+      renderCustomersModule();
+    });
+  });
 
   document.querySelectorAll('[data-open-customer]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -367,8 +417,9 @@ function renderCustomersModule() {
       e.preventDefault();
       const customerId = form.getAttribute('data-customer-id');
       const payload = Object.fromEntries(new FormData(form).entries());
+      const endpointBase = state.featureFlags.patients_v2 ? '/api/patients' : '/api/customers';
       try {
-        await apiFetch(`/api/patients/${customerId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+        await apiFetch(`${endpointBase}/${customerId}`, { method: 'PATCH', body: JSON.stringify(payload) });
         await loadCustomers();
         await loadPatientActivities(customerId || '');
         renderCustomersModule();
@@ -749,7 +800,7 @@ function renderHealthPlansModule() {
 
 
 async function loadPatientEligibility(patientId) {
-  if (!patientId) return { canOrderThisMonth: true };
+  if (!patientId || !state.featureFlags.patients_v2 || !state.featureFlags.eligibility_guard) return { canOrderThisMonth: true };
   return apiFetch(`/api/patients/${patientId}/eligibility`);
 }
 
@@ -806,6 +857,7 @@ function renderPurchaseForm() {
       <button type="submit">Registrar</button>
     </form>
     <section id="sale-eligibility" class="stack"></section>
+    ${state.featureFlags.eligibility_guard ? '' : '<div class="card"><strong>Elegibilidade mensal:</strong> desabilitada por feature flag.</div>'}
     <section id="sale-forecast" class="stack"></section>
   `;
 
@@ -855,7 +907,8 @@ function renderPurchaseForm() {
 
     try {
       if (!state.healthPlans.length || !state.doctors.length) throw new Error('Cadastre ao menos 1 médico e 1 plano de saúde antes de criar pacientes.');
-      const data = await apiFetch('/api/patients', { method: 'POST', body: JSON.stringify(payload) });
+      const endpoint = state.featureFlags.patients_v2 ? '/api/patients' : '/api/customers';
+      const data = await apiFetch(endpoint, { method: 'POST', body: JSON.stringify(payload) });
       state.customers = [data.item, ...state.customers];
       state.selectedCustomerId = data.item.id;
       const current = data.item.id;

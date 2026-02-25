@@ -22,9 +22,32 @@ import { loadPersistentState, persistState } from './store.js';
 import { createCustomer, createDoctor, createEmployee, createFinishedProduct, createHealthPlan, createPackagingFormula, createPatientActivity, createRawMaterial, createStandardFormula, createSupplier, getCustomerById, getDoctorById, getHealthPlanById, initDatabase, listCustomers, listDoctors, listEmployees, listFinishedProducts, listHealthPlans, listPackagingFormulas, listPatientActivities, listRawMaterials, listStandardFormulas, listSuppliers, updateCustomer, updateDoctor, updateHealthPlan } from './database.js';
 import { createShipmentWithFallback, quoteWithFallback } from './shipping.js';
 import { dialerProvider, emailProvider, executeWithRetries } from './communications.js';
+import { getFeatureFlags } from './featureFlags.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const featureFlags = getFeatureFlags();
+
+const operationalMetrics = {
+  contactFailures: { call: 0, email: 0 },
+  eligibilityBlocks: 0,
+  integrationLatency: {
+    dialerMs: [] as number[],
+    emailMs: [] as number[],
+    shippingQuoteMs: [] as number[],
+    shippingCreateMs: [] as number[]
+  }
+};
+
+function trackLatency(bucket: number[], startMs: number) {
+  bucket.push(Date.now() - startMs);
+  if (bucket.length > 200) bucket.shift();
+}
+
+function avgMs(values: number[]) {
+  if (!values.length) return 0;
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
 
 function resolvePublicDir() {
   const candidates = [path.resolve(process.cwd(), 'public'), path.resolve(__dirname, '../public'), path.resolve(__dirname, '../../public')];
@@ -606,6 +629,23 @@ export function createApp() {
 
   app.use('/api', authRequired);
 
+  app.get('/api/feature-flags', (_req: Request, res: Response) => {
+    return res.json(featureFlags);
+  });
+
+  app.get('/api/metrics/operational', authorize(['admin', 'gerente']), (_req: Request, res: Response) => {
+    return res.json({
+      contactFailures: operationalMetrics.contactFailures,
+      eligibilityBlocks: operationalMetrics.eligibilityBlocks,
+      integrationLatency: {
+        dialerAvgMs: avgMs(operationalMetrics.integrationLatency.dialerMs),
+        emailAvgMs: avgMs(operationalMetrics.integrationLatency.emailMs),
+        shippingQuoteAvgMs: avgMs(operationalMetrics.integrationLatency.shippingQuoteMs),
+        shippingCreateAvgMs: avgMs(operationalMetrics.integrationLatency.shippingCreateMs)
+      }
+    });
+  });
+
 
   function validatePatientReferences(input: { doctorId: string; healthPlanId: string }) {
     const doctor = getDoctorById(input.doctorId);
@@ -628,7 +668,7 @@ export function createApp() {
   app.get('/api/customers', (req: Request, res: Response) => {
     const q = req.query.q?.toString();
     const items = listCustomers(q);
-    return res.json({ items });
+    return res.json({ items, legacy: true, patientsV2Enabled: featureFlags.patients_v2 });
   });
 
   app.post('/api/customers', (req: Request, res: Response) => {
@@ -666,12 +706,14 @@ export function createApp() {
 
 
   app.get('/api/patients', (req: Request, res: Response) => {
+    if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
     const q = req.query.q?.toString();
     const items = listCustomers(q);
     return res.json({ items });
   });
 
   app.post('/api/patients', (req: Request, res: Response) => {
+    if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
     const parsed = customerCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -685,6 +727,7 @@ export function createApp() {
   });
 
   app.patch('/api/patients/:patientId', (req: Request, res: Response) => {
+    if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
     const parsed = customerUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -700,6 +743,7 @@ export function createApp() {
 
 
   app.get('/api/patients/:patientId', (req: Request, res: Response) => {
+    if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
     const item = getCustomerById(req.params.patientId);
     if (!item) return res.status(404).json({ error: 'Paciente não encontrado' });
     return res.json({ item });
@@ -709,6 +753,7 @@ export function createApp() {
 
 
   app.get('/api/patients/:patientId/activities', (req: Request, res: Response) => {
+    if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
     const patient = getCustomerById(req.params.patientId);
     if (!patient) return res.status(404).json({ error: 'Paciente não encontrado' });
 
@@ -722,6 +767,7 @@ export function createApp() {
 
 
   app.get('/api/patients/:patientId/eligibility', (req: Request, res: Response) => {
+    if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
     const patient = getCustomerById(req.params.patientId);
     if (!patient) return res.status(404).json({ error: 'Paciente não encontrado' });
 
@@ -732,6 +778,8 @@ export function createApp() {
 
 
   app.post('/api/patients/:patientId/contact', async (req: Request, res: Response) => {
+    if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
+    if (!featureFlags.communications) return res.status(503).json({ error: 'Módulo communications desabilitado por feature flag.' });
     const patient = getCustomerById(req.params.patientId);
     if (!patient) return res.status(404).json({ error: 'Paciente não encontrado' });
 
@@ -751,6 +799,7 @@ export function createApp() {
       metadata: parsed.data.metadata
     } as const;
 
+    const startedAt = Date.now();
     const result = await executeWithRetries(
       async () => {
         if (parsed.data.type === 'call') return dialerProvider.sendCall(requestPayload);
@@ -760,7 +809,8 @@ export function createApp() {
         retries: 2,
         waitMs: 50,
         onAttemptError: async (attempt, error) => {
-          logPatientActivity({
+          operationalMetrics.contactFailures[parsed.data.type] += 1;
+      logPatientActivity({
             patientId: patient.id,
             activityType: `contact_attempt_${parsed.data.type}`,
             description: `Tentativa ${attempt} de contato (${parsed.data.type}) falhou: ${error.message}`,
@@ -770,6 +820,9 @@ export function createApp() {
         }
       }
     );
+
+    if (parsed.data.type === 'call') trackLatency(operationalMetrics.integrationLatency.dialerMs, startedAt);
+    else trackLatency(operationalMetrics.integrationLatency.emailMs, startedAt);
 
     if (!result.ok) {
       logPatientActivity({
@@ -917,7 +970,9 @@ export function createApp() {
     const parsed = shippingQuoteSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+    const startedAt = Date.now();
     const result = quoteWithFallback(parsed.data);
+    trackLatency(operationalMetrics.integrationLatency.shippingQuoteMs, startedAt);
     return res.json({ item: result });
   });
 
@@ -1246,7 +1301,8 @@ export function createApp() {
       }
 
       const eligibility = computePatientEligibility(customer.id);
-      if (!eligibility.canOrderThisMonth) {
+      if (featureFlags.eligibility_guard && !eligibility.canOrderThisMonth) {
+        operationalMetrics.eligibilityBlocks += 1;
         return res.status(400).json({
           error: `Paciente já possui entrega realizada na competência atual. Próxima data elegível: ${eligibility.nextEligibleDate}`,
           eligibility
@@ -1323,12 +1379,15 @@ export function createApp() {
       logPatientActivity({ patientId: customerId, activityType: 'order_created', description: `Pedido ${order.id} criado.`, metadata: { orderId: order.id, total: order.total }, performedBy: authUser.id });
     }
 
+    const shippingStartedAt = Date.now();
     const shipment = createShipmentWithFallback({
       orderId: order.id,
       destinationZip: order.address,
       weightKg: Math.max(0.3, validMeds.reduce((acc, item) => acc + item.quantity * 0.2, 0)),
       declaredValue: total
     });
+
+    trackLatency(operationalMetrics.integrationLatency.shippingCreateMs, shippingStartedAt);
 
     deliveries.unshift({
       orderId: order.id,

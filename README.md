@@ -21,9 +21,30 @@ Sistema web corporativo completo para operação interna de vendas da 4bio, com 
   - validação de receita para controlados.
 - Módulo de pedidos com histórico.
 - Painel de entregas com busca por status e texto, ações rápidas (Em rota/Entregue) e edição de status.
-- Dashboard com indicadores operacionais e lembretes de recorrência (até 3 dias).
+- Dashboard com indicadores operacionais, métricas de integração e lembretes de recorrência.
 - Atendimento com tickets por colaborador logado.
 - Compra recorrente com desconto percentual e data de faturamento.
+- Timeline de atividades do paciente.
+
+## Feature flags (rollout seguro)
+
+As novas funcionalidades podem ser ativadas/desativadas por ambiente:
+
+- `FEATURE_PATIENTS_V2` (default: `true`)
+- `FEATURE_ELIGIBILITY_GUARD` (default: `true`)
+- `FEATURE_COMMUNICATIONS` (default: `true`)
+
+Endpoint para observabilidade de rollout: `GET /api/feature-flags`.
+
+## Migração legada (idempotente)
+
+Para migrar dados antigos de pacientes para referências normalizadas de **médico** e **plano de saúde**:
+
+```bash
+npm run migrate:legacy
+```
+
+O script é idempotente: pode ser executado mais de uma vez sem duplicar vínculos já migrados.
 
 ## Como executar
 
@@ -47,10 +68,28 @@ Aplicação disponível em `http://localhost:3000`.
 - `npm run test` — testes automatizados.
 - `npm run build` — build para produção.
 - `npm run start` — inicia build compilado.
+- `npm run migrate:legacy` — executa migração de dados legados.
+
+## Métricas operacionais
+
+Endpoint `GET /api/metrics/operational` (perfis `admin` e `gerente`) expõe:
+
+- falhas de contato por canal;
+- bloqueios por competência (elegibilidade mensal);
+- latência média de integrações (discador, e-mail e frete).
+
+## Estratégia de estabilização e remoção de legado
+
+- Durante estabilização, a tela de pacientes mantém **visão nova (patients_v2)** e **visão legada (customers)** em paralelo.
+- Após período de operação assistida, remover caminhos legados `/api/customers` e a visão legada do frontend.
+- Consolidar documentação final com apenas os fluxos ativos.
 
 ## Estrutura
 
 - `src/app.ts` — rotas, regras de negócio e validações.
+- `src/database.ts` — persistência SQLite dos cadastros mestres.
+- `src/migrate-legacy-data.ts` — migração idempotente de legado.
+- `src/featureFlags.ts` — leitura centralizada de flags.
 - `src/data.ts` — base em memória para usuários, medicamentos, pedidos e tickets.
 - `public/*` — interface web.
 - `tests/*` — testes de integração da API.

@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/src/server.js",
     "check": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "migrate:legacy": "tsx src/migrate-legacy-data.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",
