@@ -7,10 +7,12 @@ export type Customer = {
   name: string;
   patientCode: string;
   insuranceCardCode: string;
-  insurancePlanName: string;
-  insuranceProviderName: string;
+  healthPlanId: string;
+  doctorId: string;
+  insurancePlanName?: string;
+  insuranceProviderName?: string;
   diseaseCid: string;
-  primaryDoctorId: string;
+  primaryDoctorId?: string;
   email: string;
   phone: string;
   address: string;
@@ -24,6 +26,14 @@ export type Doctor = {
   specialty: string;
   email: string;
   phone: string;
+  createdAt: string;
+};
+
+export type HealthPlan = {
+  id: string;
+  name: string;
+  providerName: string;
+  registrationCode: string;
   createdAt: string;
 };
 
@@ -107,6 +117,8 @@ export function initDatabase() {
       name TEXT NOT NULL,
       patient_code TEXT NOT NULL DEFAULT '',
       insurance_card_code TEXT NOT NULL DEFAULT '',
+      health_plan_id TEXT NOT NULL DEFAULT '',
+      doctor_id TEXT NOT NULL DEFAULT '',
       insurance_plan_name TEXT NOT NULL DEFAULT '',
       insurance_provider_name TEXT NOT NULL DEFAULT '',
       disease_cid TEXT NOT NULL DEFAULT '',
@@ -132,6 +144,15 @@ export function initDatabase() {
     );
     CREATE INDEX IF NOT EXISTS idx_doctors_name ON doctors(name);
     CREATE INDEX IF NOT EXISTS idx_doctors_crm ON doctors(crm);
+
+    CREATE TABLE IF NOT EXISTS health_plans (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      provider_name TEXT NOT NULL,
+      registration_code TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_health_plans_name ON health_plans(name);
 
     CREATE TABLE IF NOT EXISTS employees (
       id TEXT PRIMARY KEY,
@@ -201,12 +222,16 @@ export function initDatabase() {
 
   ensureCustomerColumn('patient_code', "TEXT NOT NULL DEFAULT ''");
   ensureCustomerColumn('insurance_card_code', "TEXT NOT NULL DEFAULT ''");
+  ensureCustomerColumn('health_plan_id', "TEXT NOT NULL DEFAULT ''");
+  ensureCustomerColumn('doctor_id', "TEXT NOT NULL DEFAULT ''");
   ensureCustomerColumn('insurance_plan_name', "TEXT NOT NULL DEFAULT ''");
   ensureCustomerColumn('insurance_provider_name', "TEXT NOT NULL DEFAULT ''");
   ensureCustomerColumn('disease_cid', "TEXT NOT NULL DEFAULT ''");
   ensureCustomerColumn('primary_doctor_id', "TEXT NOT NULL DEFAULT ''");
   db.exec('CREATE INDEX IF NOT EXISTS idx_customers_patient_code ON customers(patient_code);');
   db.exec('CREATE INDEX IF NOT EXISTS idx_customers_insurance_card_code ON customers(insurance_card_code);');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customers_health_plan_id ON customers(health_plan_id);');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_customers_doctor_id ON customers(doctor_id);');
 
   return db;
 }
@@ -224,25 +249,25 @@ export function listCustomers(search?: string) {
   const conn = initDatabase();
   if (search?.trim()) {
     const q = `%${search.trim()}%`;
-    return conn.prepare(`SELECT id,name,patient_code as patientCode,insurance_card_code as insuranceCardCode,insurance_plan_name as insurancePlanName,insurance_provider_name as insuranceProviderName,disease_cid as diseaseCid,primary_doctor_id as primaryDoctorId,email,phone,address,created_at as createdAt FROM customers WHERE name LIKE ? OR email LIKE ? OR phone LIKE ? OR patient_code LIKE ? OR insurance_card_code LIKE ? ORDER BY name ASC`).all(q, q, q, q, q) as Customer[];
+    return conn.prepare(`SELECT id,name,patient_code as patientCode,insurance_card_code as insuranceCardCode,health_plan_id as healthPlanId,doctor_id as doctorId,insurance_plan_name as insurancePlanName,insurance_provider_name as insuranceProviderName,disease_cid as diseaseCid,primary_doctor_id as primaryDoctorId,email,phone,address,created_at as createdAt FROM customers WHERE name LIKE ? OR email LIKE ? OR phone LIKE ? OR patient_code LIKE ? OR insurance_card_code LIKE ? ORDER BY name ASC`).all(q, q, q, q, q) as Customer[];
   }
-  return conn.prepare('SELECT id,name,patient_code as patientCode,insurance_card_code as insuranceCardCode,insurance_plan_name as insurancePlanName,insurance_provider_name as insuranceProviderName,disease_cid as diseaseCid,primary_doctor_id as primaryDoctorId,email,phone,address,created_at as createdAt FROM customers ORDER BY name ASC').all() as Customer[];
+  return conn.prepare('SELECT id,name,patient_code as patientCode,insurance_card_code as insuranceCardCode,health_plan_id as healthPlanId,doctor_id as doctorId,insurance_plan_name as insurancePlanName,insurance_provider_name as insuranceProviderName,disease_cid as diseaseCid,primary_doctor_id as primaryDoctorId,email,phone,address,created_at as createdAt FROM customers ORDER BY name ASC').all() as Customer[];
 }
 
 export function getCustomerById(id: string) {
-  return initDatabase().prepare('SELECT id,name,patient_code as patientCode,insurance_card_code as insuranceCardCode,insurance_plan_name as insurancePlanName,insurance_provider_name as insuranceProviderName,disease_cid as diseaseCid,primary_doctor_id as primaryDoctorId,email,phone,address,created_at as createdAt FROM customers WHERE id = ?').get(id) as Customer | undefined;
+  return initDatabase().prepare('SELECT id,name,patient_code as patientCode,insurance_card_code as insuranceCardCode,health_plan_id as healthPlanId,doctor_id as doctorId,insurance_plan_name as insurancePlanName,insurance_provider_name as insuranceProviderName,disease_cid as diseaseCid,primary_doctor_id as primaryDoctorId,email,phone,address,created_at as createdAt FROM customers WHERE id = ?').get(id) as Customer | undefined;
 }
 
 export function createCustomer(input: Omit<Customer, 'id' | 'createdAt'>) {
   const item: Customer = { id: makeId('c'), ...input, createdAt: new Date().toISOString() };
-  initDatabase().prepare('INSERT INTO customers (id,name,patient_code,insurance_card_code,insurance_plan_name,insurance_provider_name,disease_cid,primary_doctor_id,email,phone,address,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)').run(item.id, item.name, item.patientCode, item.insuranceCardCode, item.insurancePlanName, item.insuranceProviderName, item.diseaseCid, item.primaryDoctorId, item.email, item.phone, item.address, item.createdAt);
+  initDatabase().prepare('INSERT INTO customers (id,name,patient_code,insurance_card_code,health_plan_id,doctor_id,insurance_plan_name,insurance_provider_name,disease_cid,primary_doctor_id,email,phone,address,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)').run(item.id, item.name, item.patientCode, item.insuranceCardCode, item.healthPlanId, item.doctorId, item.insurancePlanName || '', item.insuranceProviderName || '', item.diseaseCid, item.primaryDoctorId || '', item.email, item.phone, item.address, item.createdAt);
   return item;
 }
 
 export function updateCustomer(id: string, input: Omit<Customer, 'id' | 'createdAt'>) {
   const exists = getCustomerById(id);
   if (!exists) return undefined;
-  initDatabase().prepare('UPDATE customers SET name=?,patient_code=?,insurance_card_code=?,insurance_plan_name=?,insurance_provider_name=?,disease_cid=?,primary_doctor_id=?,email=?,phone=?,address=? WHERE id=?').run(input.name, input.patientCode, input.insuranceCardCode, input.insurancePlanName, input.insuranceProviderName, input.diseaseCid, input.primaryDoctorId, input.email, input.phone, input.address, id);
+  initDatabase().prepare('UPDATE customers SET name=?,patient_code=?,insurance_card_code=?,health_plan_id=?,doctor_id=?,insurance_plan_name=?,insurance_provider_name=?,disease_cid=?,primary_doctor_id=?,email=?,phone=?,address=? WHERE id=?').run(input.name, input.patientCode, input.insuranceCardCode, input.healthPlanId, input.doctorId, input.insurancePlanName || '', input.insuranceProviderName || '', input.diseaseCid, input.primaryDoctorId || '', input.email, input.phone, input.address, id);
   return getCustomerById(id);
 }
 
@@ -270,6 +295,33 @@ export function updateDoctor(id: string, input: Omit<Doctor, 'id' | 'createdAt'>
   if (!exists) return undefined;
   initDatabase().prepare('UPDATE doctors SET name=?,crm=?,specialty=?,email=?,phone=? WHERE id=?').run(input.name, input.crm, input.specialty, input.email, input.phone, id);
   return getDoctorById(id);
+}
+
+
+export function listHealthPlans(search?: string) {
+  const conn = initDatabase();
+  if (search?.trim()) {
+    const q = `%${search.trim()}%`;
+    return conn.prepare(`SELECT id,name,provider_name as providerName,registration_code as registrationCode,created_at as createdAt FROM health_plans WHERE name LIKE ? OR provider_name LIKE ? OR registration_code LIKE ? ORDER BY name ASC`).all(q, q, q) as HealthPlan[];
+  }
+  return conn.prepare('SELECT id,name,provider_name as providerName,registration_code as registrationCode,created_at as createdAt FROM health_plans ORDER BY name ASC').all() as HealthPlan[];
+}
+
+export function getHealthPlanById(id: string) {
+  return initDatabase().prepare('SELECT id,name,provider_name as providerName,registration_code as registrationCode,created_at as createdAt FROM health_plans WHERE id = ?').get(id) as HealthPlan | undefined;
+}
+
+export function createHealthPlan(input: Omit<HealthPlan, 'id' | 'createdAt'>) {
+  const item: HealthPlan = { id: makeId('hp'), ...input, createdAt: new Date().toISOString() };
+  initDatabase().prepare('INSERT INTO health_plans (id,name,provider_name,registration_code,created_at) VALUES (?,?,?,?,?)').run(item.id, item.name, item.providerName, item.registrationCode, item.createdAt);
+  return item;
+}
+
+export function updateHealthPlan(id: string, input: Omit<HealthPlan, 'id' | 'createdAt'>) {
+  const exists = getHealthPlanById(id);
+  if (!exists) return undefined;
+  initDatabase().prepare('UPDATE health_plans SET name=?,provider_name=?,registration_code=? WHERE id=?').run(input.name, input.providerName, input.registrationCode, id);
+  return getHealthPlanById(id);
 }
 
 export function listEmployees(search?: string) {

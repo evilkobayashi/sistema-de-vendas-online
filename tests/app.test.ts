@@ -15,6 +15,24 @@ async function loginAs(employeeCode = '4B-101', password = 'operador123') {
   return response.body.token as string;
 }
 
+
+async function createDoctorAndPlan(token: string) {
+  const doctor = await request(app)
+    .post('/api/doctors')
+    .set('Authorization', `Bearer ${token}`)
+    .send({ name: `Dr. Ref ${Date.now()}`, crm: `CRM-${Date.now()}`, specialty: 'Clínica', email: `doc${Date.now()}@example.com`, phone: '11911110000' });
+  expect(doctor.status).toBe(201);
+
+  const plan = await request(app)
+    .post('/api/health-plans')
+    .set('Authorization', `Bearer ${token}`)
+    .send({ name: `Plano Ref ${Date.now()}`, providerName: 'Operadora Ref', registrationCode: `REG-${Date.now()}` });
+  expect(plan.status).toBe(201);
+
+  return { doctorId: doctor.body.item.id as string, healthPlanId: plan.body.item.id as string };
+}
+
+
 describe('4bio internal sales app', () => {
   beforeAll(() => {
     if (!fs.existsSync(runtimeDir)) fs.mkdirSync(runtimeDir, { recursive: true });
@@ -60,11 +78,12 @@ describe('4bio internal sales app', () => {
 
   it('cadastra e lista clientes em banco de dados', async () => {
     const token = await loginAs();
+    const refs = await createDoctorAndPlan(token);
 
     const created = await request(app)
       .post('/api/patients')
       .set('Authorization', `Bearer ${token}`)
-      .send({ name: 'Paciente Teste', patientCode: 'PAC-001', insuranceCardCode: 'CARD-001', insurancePlanName: 'Plano A', insuranceProviderName: 'Operadora A', diseaseCid: 'A00', primaryDoctorId: 'd-temp', email: 'cliente@example.com', phone: '11977776666', address: 'Rua Cliente, 10' });
+      .send({ name: 'Paciente Teste', patientCode: 'PAC-001', insuranceCardCode: 'CARD-001', healthPlanId: refs.healthPlanId, doctorId: refs.doctorId, insurancePlanName: 'Plano A', insuranceProviderName: 'Operadora A', diseaseCid: 'A00', primaryDoctorId: refs.doctorId, email: 'cliente@example.com', phone: '11977776666', address: 'Rua Cliente, 10' });
 
     expect(created.status).toBe(201);
 
@@ -77,16 +96,17 @@ describe('4bio internal sales app', () => {
 
   it('edita cliente cadastrado e retorna dados atualizados', async () => {
     const token = await loginAs();
+    const refs = await createDoctorAndPlan(token);
 
     const created = await request(app)
       .post('/api/patients')
       .set('Authorization', `Bearer ${token}`)
-      .send({ name: 'Paciente Edit', patientCode: 'PAC-002', insuranceCardCode: 'CARD-002', insurancePlanName: 'Plano B', insuranceProviderName: 'Operadora B', diseaseCid: 'B00', primaryDoctorId: 'd-temp', email: 'cliente.edit@example.com', phone: '11933334444', address: 'Rua X, 1' });
+      .send({ name: 'Paciente Edit', patientCode: 'PAC-002', insuranceCardCode: 'CARD-002', healthPlanId: refs.healthPlanId, doctorId: refs.doctorId, insurancePlanName: 'Plano B', insuranceProviderName: 'Operadora B', diseaseCid: 'B00', primaryDoctorId: refs.doctorId, email: 'cliente.edit@example.com', phone: '11933334444', address: 'Rua X, 1' });
 
     const updated = await request(app)
       .patch(`/api/patients/${created.body.item.id}`)
       .set('Authorization', `Bearer ${token}`)
-      .send({ name: 'Paciente Editado', patientCode: 'PAC-002', insuranceCardCode: 'CARD-002-ALT', insurancePlanName: 'Plano B2', insuranceProviderName: 'Operadora B', diseaseCid: 'B01', primaryDoctorId: 'd-temp', email: 'cliente.editado@example.com', phone: '11955556666', address: 'Rua Y, 2' });
+      .send({ name: 'Paciente Editado', patientCode: 'PAC-002', insuranceCardCode: 'CARD-002-ALT', healthPlanId: refs.healthPlanId, doctorId: refs.doctorId, insurancePlanName: 'Plano B2', insuranceProviderName: 'Operadora B', diseaseCid: 'B01', primaryDoctorId: refs.doctorId, email: 'cliente.editado@example.com', phone: '11955556666', address: 'Rua Y, 2' });
 
     expect(updated.status).toBe(200);
     expect(updated.body.item.name).toBe('Paciente Editado');
@@ -145,6 +165,29 @@ describe('4bio internal sales app', () => {
 
 
 
+
+
+
+  it('cadastra e edita planos de saúde', async () => {
+    const token = await loginAs();
+
+    const created = await request(app)
+      .post('/api/health-plans')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Plano Vida', providerName: 'Operadora Vida', registrationCode: 'REG-VIDA' });
+
+    expect(created.status).toBe(201);
+
+    const listed = await request(app).get('/api/health-plans?q=Vida').set('Authorization', `Bearer ${token}`);
+    expect(listed.status).toBe(200);
+    expect(listed.body.items.length).toBeGreaterThan(0);
+
+    const updated = await request(app)
+      .patch(`/api/health-plans/${created.body.item.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ name: 'Plano Vida Plus', providerName: 'Operadora Vida', registrationCode: 'REG-VIDA' });
+    expect(updated.status).toBe(200);
+  });
 
   it('gera orçamento inteligente, impressão e produção com leitura de balança', async () => {
     const token = await loginAs('4B-014', 'gerente123');
@@ -289,6 +332,7 @@ describe('4bio internal sales app', () => {
 
   it('cadastra, consulta e atualiza paciente via endpoints /api/patients', async () => {
     const token = await loginAs();
+    const refs = await createDoctorAndPlan(token);
 
     const created = await request(app)
       .post('/api/patients')
@@ -300,7 +344,9 @@ describe('4bio internal sales app', () => {
         insurancePlanName: 'Plano Master',
         insuranceProviderName: 'Operadora Master',
         diseaseCid: 'Z99',
-        primaryDoctorId: 'd-master',
+        primaryDoctorId: refs.doctorId,
+        healthPlanId: refs.healthPlanId,
+        doctorId: refs.doctorId,
         email: 'pac.master@example.com',
         phone: '11900000000',
         address: 'Rua Master, 90'
@@ -325,7 +371,9 @@ describe('4bio internal sales app', () => {
         insurancePlanName: 'Plano Master',
         insuranceProviderName: 'Operadora Master',
         diseaseCid: 'Z98',
-        primaryDoctorId: 'd-master',
+        primaryDoctorId: refs.doctorId,
+        healthPlanId: refs.healthPlanId,
+        doctorId: refs.doctorId,
         email: 'pac.master@example.com',
         phone: '11900000000',
         address: 'Rua Master, 90'
@@ -337,10 +385,11 @@ describe('4bio internal sales app', () => {
 
   it('permite criar pedido usando customerId cadastrado', async () => {
     const token = await loginAs();
+    const refs = await createDoctorAndPlan(token);
     const createdCustomer = await request(app)
       .post('/api/patients')
       .set('Authorization', `Bearer ${token}`)
-      .send({ name: 'Paciente Pedido', patientCode: 'PAC-003', insuranceCardCode: 'CARD-003', insurancePlanName: 'Plano C', insuranceProviderName: 'Operadora C', diseaseCid: 'C00', primaryDoctorId: 'd-temp', email: 'pedido@example.com', phone: '11911112222', address: 'Rua Pedido, 20' });
+      .send({ name: 'Paciente Pedido', patientCode: 'PAC-003', insuranceCardCode: 'CARD-003', healthPlanId: refs.healthPlanId, doctorId: refs.doctorId, insurancePlanName: 'Plano C', insuranceProviderName: 'Operadora C', diseaseCid: 'C00', primaryDoctorId: refs.doctorId, email: 'pedido@example.com', phone: '11911112222', address: 'Rua Pedido, 20' });
 
     const createdOrder = await request(app)
       .post('/api/orders')

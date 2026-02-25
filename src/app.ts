@@ -19,7 +19,7 @@ import {
   type User
 } from './data.js';
 import { loadPersistentState, persistState } from './store.js';
-import { createCustomer, createDoctor, createEmployee, createFinishedProduct, createPackagingFormula, createRawMaterial, createStandardFormula, createSupplier, getCustomerById, getDoctorById, initDatabase, listCustomers, listDoctors, listEmployees, listFinishedProducts, listPackagingFormulas, listRawMaterials, listStandardFormulas, listSuppliers, updateCustomer, updateDoctor } from './database.js';
+import { createCustomer, createDoctor, createEmployee, createFinishedProduct, createHealthPlan, createPackagingFormula, createRawMaterial, createStandardFormula, createSupplier, getCustomerById, getDoctorById, getHealthPlanById, initDatabase, listCustomers, listDoctors, listEmployees, listFinishedProducts, listHealthPlans, listPackagingFormulas, listRawMaterials, listStandardFormulas, listSuppliers, updateCustomer, updateDoctor, updateHealthPlan } from './database.js';
 import { createShipmentWithFallback, quoteWithFallback } from './shipping.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -91,10 +91,12 @@ const customerCreateSchema = z.object({
   name: z.string().min(2),
   patientCode: z.string().min(2),
   insuranceCardCode: z.string().min(2),
-  insurancePlanName: z.string().min(2),
-  insuranceProviderName: z.string().min(2),
+  healthPlanId: z.string().min(2),
+  doctorId: z.string().min(2),
+  insurancePlanName: z.string().min(2).optional(),
+  insuranceProviderName: z.string().min(2).optional(),
   diseaseCid: z.string().min(2),
-  primaryDoctorId: z.string().min(2),
+  primaryDoctorId: z.string().min(2).optional(),
   email: z.string().email(),
   phone: z.string().min(8),
   address: z.string().min(5)
@@ -111,6 +113,14 @@ const doctorCreateSchema = z.object({
 });
 
 const doctorUpdateSchema = doctorCreateSchema;
+
+const healthPlanCreateSchema = z.object({
+  name: z.string().min(2),
+  providerName: z.string().min(2),
+  registrationCode: z.string().min(3)
+});
+
+const healthPlanUpdateSchema = healthPlanCreateSchema;
 
 
 const employeeCreateSchema = z.object({
@@ -548,6 +558,15 @@ export function createApp() {
 
   app.use('/api', authRequired);
 
+
+  function validatePatientReferences(input: { doctorId: string; healthPlanId: string }) {
+    const doctor = getDoctorById(input.doctorId);
+    if (!doctor) return { error: 'Médico informado não existe.' };
+    const healthPlan = getHealthPlanById(input.healthPlanId);
+    if (!healthPlan) return { error: 'Plano de saúde informado não existe.' };
+    return { doctor, healthPlan };
+  }
+
   app.get('/api/customers', (req: Request, res: Response) => {
     const q = req.query.q?.toString();
     const items = listCustomers(q);
@@ -557,6 +576,9 @@ export function createApp() {
   app.post('/api/customers', (req: Request, res: Response) => {
     const parsed = customerCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const refs = validatePatientReferences(parsed.data);
+    if ('error' in refs) return res.status(400).json({ error: refs.error });
 
     const item = createCustomer(parsed.data);
     return res.status(201).json({ item });
@@ -571,6 +593,9 @@ export function createApp() {
   app.patch('/api/customers/:customerId', (req: Request, res: Response) => {
     const parsed = customerUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const refs = validatePatientReferences(parsed.data);
+    if ('error' in refs) return res.status(400).json({ error: refs.error });
 
     const item = updateCustomer(req.params.customerId, parsed.data);
     if (!item) return res.status(404).json({ error: 'Cliente não encontrado' });
@@ -588,6 +613,9 @@ export function createApp() {
     const parsed = customerCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
+    const refs = validatePatientReferences(parsed.data);
+    if ('error' in refs) return res.status(400).json({ error: refs.error });
+
     const item = createCustomer(parsed.data);
     return res.status(201).json({ item });
   });
@@ -595,6 +623,9 @@ export function createApp() {
   app.patch('/api/patients/:patientId', (req: Request, res: Response) => {
     const parsed = customerUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const refs = validatePatientReferences(parsed.data);
+    if ('error' in refs) return res.status(400).json({ error: refs.error });
 
     const item = updateCustomer(req.params.patientId, parsed.data);
     if (!item) return res.status(404).json({ error: 'Paciente não encontrado' });
@@ -609,6 +640,30 @@ export function createApp() {
   });
 
 
+
+
+  app.get('/api/health-plans', (req: Request, res: Response) => {
+    const q = req.query.q?.toString();
+    const items = listHealthPlans(q);
+    return res.json({ items });
+  });
+
+  app.post('/api/health-plans', (req: Request, res: Response) => {
+    const parsed = healthPlanCreateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const item = createHealthPlan(parsed.data);
+    return res.status(201).json({ item });
+  });
+
+  app.patch('/api/health-plans/:healthPlanId', (req: Request, res: Response) => {
+    const parsed = healthPlanUpdateSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const item = updateHealthPlan(req.params.healthPlanId, parsed.data);
+    if (!item) return res.status(404).json({ error: 'Plano de saúde não encontrado' });
+    return res.json({ item });
+  });
 
   app.get('/api/doctors', (req: Request, res: Response) => {
     const q = req.query.q?.toString();
@@ -1030,6 +1085,14 @@ export function createApp() {
     const authUser = getAuthUser(req);
     const { items, prescriptionCode, recurring, customerId } = parsed.data;
     const customer = customerId ? getCustomerById(customerId) : undefined;
+
+    if (customer) {
+      const doctorExists = getDoctorById(customer.doctorId);
+      const healthPlanExists = getHealthPlanById(customer.healthPlanId);
+      if (!doctorExists || !healthPlanExists) {
+        return res.status(400).json({ error: 'Paciente com referência inválida de médico/plano de saúde.' });
+      }
+    }
 
     const meds = items.map((item) => {
       const med = medicines.find((m) => m.id === item.medicineId);

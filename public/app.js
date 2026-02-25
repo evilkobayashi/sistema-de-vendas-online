@@ -1,4 +1,4 @@
-const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', doctors: [], selectedDoctorId: '', doctorsView: 'menu', employees: [], suppliers: [], finishedProducts: [], rawMaterials: [], standardFormulas: [], packagingFormulas: [], budgets: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
+const state = { token: null, user: null, medicines: [], orders: [], deliveries: [], tickets: [], customers: [], selectedCustomerId: '', doctors: [], selectedDoctorId: '', doctorsView: 'menu', employees: [], suppliers: [], finishedProducts: [], rawMaterials: [], standardFormulas: [], packagingFormulas: [], healthPlans: [], selectedHealthPlanId: '', budgets: [], catalogFilters: { q: '', specialty: '', lab: '', sort: 'relevance' } };
 const byId = (id) => document.getElementById(id);
 const money = (v) => `R$ ${Number(v).toFixed(2)}`;
 const ensureArray = (v) => (Array.isArray(v) ? v : []);
@@ -63,13 +63,14 @@ byId('login-form').addEventListener('submit', async (e) => {
 });
 
 async function refreshAll() {
-  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers(), loadDoctors(), loadMasterData(), loadBudgets()]);
+  await Promise.all([loadDashboard(), loadCatalog(), loadInventory(), loadOrders(), loadDeliveries(), loadTickets(), loadCustomers(), loadDoctors(), loadMasterData(), loadHealthPlans(), loadBudgets()]);
   renderPurchaseForm();
   renderCustomersModule();
   renderDoctorsModule();
   renderMasterDataModule();
   renderInventoryOpsModule();
   renderOrcamentosModule();
+  renderHealthPlansModule();
 }
 
 async function loadDashboard() {
@@ -321,10 +322,12 @@ function renderCustomersModule() {
             <input name="name" value="${selected.name}" required />
             <input name="patientCode" value="${selected.patientCode || ""}" placeholder="Código do paciente" required />
             <input name="insuranceCardCode" value="${selected.insuranceCardCode || ""}" placeholder="Código da carteirinha" required />
-            <input name="insurancePlanName" value="${selected.insurancePlanName || ""}" placeholder="Nome do plano" required />
-            <input name="insuranceProviderName" value="${selected.insuranceProviderName || ""}" placeholder="Operadora do plano" required />
+            <select name="healthPlanId" required>${state.healthPlans.map((p) => `<option value="${p.id}" ${p.id === selected.healthPlanId ? "selected" : ""}>${p.name} • ${p.providerName}</option>`).join("")}</select>
+            <select name="doctorId" required>${state.doctors.map((d) => `<option value="${d.id}" ${d.id === selected.doctorId ? "selected" : ""}>${d.name} • CRM ${d.crm}</option>`).join("")}</select>
+            <input name="insurancePlanName" value="${selected.insurancePlanName || ""}" placeholder="(Legado) Nome do plano" />
+            <input name="insuranceProviderName" value="${selected.insuranceProviderName || ""}" placeholder="(Legado) Operadora do plano" />
             <input name="diseaseCid" value="${selected.diseaseCid || ""}" placeholder="CID" required />
-            <input name="primaryDoctorId" value="${selected.primaryDoctorId || ""}" placeholder="ID do médico" required />
+            <input name="primaryDoctorId" value="${selected.primaryDoctorId || ""}" placeholder="(Legado) ID do médico" />
             <input name="email" type="email" value="${selected.email}" required />
             <input name="phone" value="${selected.phone}" required />
             <input name="address" value="${selected.address}" required />
@@ -497,6 +500,7 @@ function bindCreateForm({ id, endpoint, onSuccess }) {
       renderMasterDataModule();
       renderInventoryOpsModule();
   renderOrcamentosModule();
+  renderHealthPlansModule();
       if (onSuccess) onSuccess();
       alert('Cadastro salvo com sucesso.');
     } catch (error) {
@@ -648,6 +652,85 @@ function renderOrcamentosModule() {
   }
 }
 
+
+async function loadHealthPlans() {
+  const data = await apiFetch('/api/health-plans');
+  state.healthPlans = ensureArray(data.items);
+  if (state.selectedHealthPlanId && !state.healthPlans.some((x) => x.id === state.selectedHealthPlanId)) {
+    state.selectedHealthPlanId = '';
+  }
+}
+
+function renderHealthPlansModule() {
+  const selected = state.healthPlans.find((x) => x.id === state.selectedHealthPlanId);
+  const el = byId('planos-saude');
+  if (!el) return;
+
+  el.innerHTML = `
+    <h2>Planos de saúde</h2>
+    <div class="grid-form" style="grid-template-columns: 1fr 1fr; gap: 16px;">
+      <div>
+        <h3>Cadastro de plano</h3>
+        <form id="health-plan-form" class="grid-form">
+          <input name="name" placeholder="Nome do plano" required />
+          <input name="providerName" placeholder="Operadora" required />
+          <input name="registrationCode" placeholder="Código registro" required />
+          <button type="submit">Salvar plano</button>
+        </form>
+        <h3 style="margin-top:12px">Lista</h3>
+        ${state.healthPlans.length ? `<div class="stack">${state.healthPlans.map((x) => `<button class="quick-btn" data-open-plan="${x.id}">${x.name} • ${x.providerName}</button>`).join('')}</div>` : '<div class="empty">Nenhum plano cadastrado.</div>'}
+      </div>
+      <div>
+        <h3>Editar plano</h3>
+        ${selected ? `<form id="health-plan-edit-form" class="grid-form" data-health-plan-id="${selected.id}"><input name="name" value="${selected.name}" required /><input name="providerName" value="${selected.providerName}" required /><input name="registrationCode" value="${selected.registrationCode}" required /><button type="submit">Salvar alterações</button></form>` : '<div class="empty">Selecione um plano para editar.</div>'}
+      </div>
+    </div>
+  `;
+
+  document.querySelectorAll('[data-open-plan]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.selectedHealthPlanId = btn.getAttribute('data-open-plan') || '';
+      renderHealthPlansModule();
+    });
+  });
+
+  const createForm = byId('health-plan-form');
+  if (createForm) {
+    createForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const payload = Object.fromEntries(new FormData(createForm).entries());
+      try {
+        const data = await apiFetch('/api/health-plans', { method: 'POST', body: JSON.stringify(payload) });
+        state.healthPlans = [data.item, ...state.healthPlans];
+        state.selectedHealthPlanId = data.item.id;
+        renderHealthPlansModule();
+        alert('Plano de saúde cadastrado com sucesso.');
+      } catch (error) {
+        alert(error.message || 'Erro ao salvar plano de saúde');
+      }
+    });
+  }
+
+  const editForm = byId('health-plan-edit-form');
+  if (editForm) {
+    editForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const id = editForm.getAttribute('data-health-plan-id');
+      const payload = Object.fromEntries(new FormData(editForm).entries());
+      try {
+        await apiFetch(`/api/health-plans/${id}`, { method: 'PATCH', body: JSON.stringify(payload) });
+        await loadHealthPlans();
+        renderHealthPlansModule();
+        renderCustomersModule();
+        renderPurchaseForm();
+        alert('Plano de saúde atualizado.');
+      } catch (error) {
+        alert(error.message || 'Erro ao atualizar plano de saúde');
+      }
+    });
+  }
+}
+
 function renderPurchaseForm() {
   byId('nova-venda').innerHTML = `
     <h2>Nova compra</h2>
@@ -659,7 +742,8 @@ function renderPurchaseForm() {
       <input name="address" placeholder="Endereço" required readonly/>
       <input name="patientCode" placeholder="Código do paciente" readonly/>
       <input name="insuranceCardCode" placeholder="Carteirinha" readonly/>
-      <input name="insurancePlanName" placeholder="Plano" readonly/>
+      <input name="healthPlanName" placeholder="Plano" readonly/>
+      <input name="doctorName" placeholder="Médico" readonly/>
       <input name="diseaseCid" placeholder="CID" readonly/>
       <div class="inline" style="grid-column:1 / -1;">
         <button type="button" id="create-customer-btn" class="quick-btn">Cadastrar paciente com os dados acima</button>
@@ -700,7 +784,10 @@ function renderPurchaseForm() {
       form.querySelector('[name="address"]').value = selected.address;
       form.querySelector('[name="patientCode"]').value = selected.patientCode || '';
       form.querySelector('[name="insuranceCardCode"]').value = selected.insuranceCardCode || '';
-      form.querySelector('[name="insurancePlanName"]').value = selected.insurancePlanName || '';
+      const hp = state.healthPlans.find((p) => p.id === selected.healthPlanId);
+      const dr = state.doctors.find((d) => d.id === selected.doctorId);
+      form.querySelector('[name="healthPlanName"]').value = hp ? `${hp.name} • ${hp.providerName}` : (selected.insurancePlanName || '');
+      form.querySelector('[name="doctorName"]').value = dr ? dr.name : (selected.primaryDoctorId || '');
       form.querySelector('[name="diseaseCid"]').value = selected.diseaseCid || '';
       renderTreatmentForecast(form);
     });
@@ -716,13 +803,16 @@ function renderPurchaseForm() {
       address: form.querySelector('[name="address"]').value,
       patientCode: `PAC-${Date.now().toString().slice(-6)}`,
       insuranceCardCode: 'PREENCHER',
+      healthPlanId: state.healthPlans[0]?.id || '',
+      doctorId: state.doctors[0]?.id || '',
       insurancePlanName: 'PREENCHER',
       insuranceProviderName: 'PREENCHER',
       diseaseCid: 'PREENCHER',
-      primaryDoctorId: 'PREENCHER'
+      primaryDoctorId: state.doctors[0]?.id || ''
     };
 
     try {
+      if (!state.healthPlans.length || !state.doctors.length) throw new Error('Cadastre ao menos 1 médico e 1 plano de saúde antes de criar pacientes.');
       const data = await apiFetch('/api/patients', { method: 'POST', body: JSON.stringify(payload) });
       state.customers = [data.item, ...state.customers];
       state.selectedCustomerId = data.item.id;
