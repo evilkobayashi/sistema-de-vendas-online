@@ -1,0 +1,112 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Customer {
+  id                    String            @id @default(uuid())
+  name                  String
+  patientCode           String            @default("")
+  insuranceCardCode     String            @default("")
+  healthPlanId          String            @default("")
+  doctorId              String            @default("")
+  insurancePlanName     String            @default("")
+  insuranceProviderName String            @default("")
+  diseaseCid            String            @default("")
+  primaryDoctorId       String            @default("")
+  email                 String
+  phone                 String
+  address               String
+  createdAt             DateTime          @default(now())
+  activities            PatientActivity[]
+}
+
+model Doctor {
+  id        String   @id @default(uuid())
+  name      String
+  crm       String   @unique
+  specialty String
+  email     String
+  phone     String
+  createdAt DateTime @default(now())
+}
+
+model HealthPlan {
+  id               String   @id @default(uuid())
+  name             String
+  providerName     String
+  registrationCode String   @unique
+  createdAt        DateTime @default(now())
+}
+
+model PatientActivity {
+  id           String   @id @default(uuid())
+  customer     Customer @relation(fields: [patientId], references: [id])
+  patientId    String
+  activityType String
+  description  String
+  metadataJson String
+  performedBy  String
+  createdAt    DateTime @default(now())
+}
+
+model Employee {
+  id           String   @id @default(uuid())
+  name         String
+  role         String
+  employeeCode String   @unique
+  email        String
+  phone        String
+  createdAt    DateTime @default(now())
+}
+
+model Supplier {
+  id        String   @id @default(uuid())
+  name      String
+  document  String
+  email     String
+  phone     String
+  category  String
+  createdAt DateTime @default(now())
+}
+
+model FinishedProduct {
+  id          String   @id @default(uuid())
+  name        String
+  productType String
+  sku         String   @unique
+  unit        String
+  price       Float
+  createdAt   DateTime @default(now())
+}
+
+model RawMaterial {
+  id        String   @id @default(uuid())
+  name      String
+  code      String   @unique
+  unit      String
+  cost      Float
+  createdAt DateTime @default(now())
+}
+
+model StandardFormula {
+  id           String   @id @default(uuid())
+  name         String
+  version      String
+  productId    String
+  instructions String
+  createdAt    DateTime @default(now())
+}
+
+model PackagingFormula {
+  id              String   @id @default(uuid())
+  name            String
+  productId       String
+  packagingType   String
+  unitsPerPackage Int
+  notes           String
+  createdAt       DateTime @default(now())
+}

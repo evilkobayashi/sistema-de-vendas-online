@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcrypt';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -262,6 +264,7 @@ const medicineCreateSchema = z.object({
 type Session = { user: Omit<User, 'password'>; expiresAt: number };
 const sessions = new Map<string, Session>();
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
 
 const budgets: Array<{ id: string; patientName: string; doctorName?: string; prescriptionText: string; suggestedItems: Array<{ medicineId: string; medicineName: string; confidence: number; quantitySuggestion: number }>; status: 'draft' | 'approved'; createdAt: string }> = [];
 const scaleReadings: Array<{ id: string; quoteId: string; medicineId: string; expectedWeightGrams: number; measuredWeightGrams: number; deviationPercent: number; status: 'ok' | 'alert'; createdAt: string }> = [];
@@ -285,21 +288,20 @@ function cleanExpiredSessions() {
   }
 }
 
+
 function authRequired(req: Request, res: Response, next: NextFunction) {
-  cleanExpiredSessions();
   const authHeader = req.header('authorization');
   const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
   if (!token) return res.status(401).json({ error: 'Token ausente' });
-
-  const session = sessions.get(token);
-  if (!session || session.expiresAt <= Date.now()) {
-    if (session) sessions.delete(token);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as Omit<User, 'password'>;
+    (req as AuthenticatedRequest).authUser = payload;
+    return next();
+  } catch (err) {
     return res.status(401).json({ error: 'Sessão inválida ou expirada' });
   }
-
-  (req as AuthenticatedRequest).authUser = session.user;
-  return next();
 }
+
 
 function authorize(roles: Role[]) {
   return (req: Request, res: Response, next: NextFunction) => {
@@ -603,7 +605,7 @@ export function createApp() {
   app.get('/health/live', (_: Request, res: Response) => res.json({ status: 'ok' }));
   app.get('/health/ready', (_: Request, res: Response) => res.json({ status: 'ready', sessions: sessions.size }));
 
-  app.post('/api/login', (req: Request, res: Response) => {
+  app.post('/api/login', async (req: Request, res: Response) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Payload inválido' });
 
@@ -613,14 +615,14 @@ export function createApp() {
     const user = users.find((u) => u.employeeCode.trim().toUpperCase() === employeeCodeNormalized && u.password === passwordNormalized);
     if (!user) return res.status(401).json({ error: 'Credenciais inválidas' });
 
-    const token = createToken();
+    
     const safeUser = { id: user.id, name: user.name, role: user.role, employeeCode: user.employeeCode };
-    sessions.set(token, { user: safeUser, expiresAt: Date.now() + SESSION_TTL_MS });
+    const token = jwt.sign(safeUser, JWT_SECRET, { expiresIn: '8h' });
 
     return res.json({ token, expiresInMs: SESSION_TTL_MS, user: safeUser });
   });
 
-  app.post('/api/logout', authRequired, (req: Request, res: Response) => {
+  app.post('/api/logout', authRequired, async (req: Request, res: Response) => {
     const authHeader = req.header('authorization');
     const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
     if (token) sessions.delete(token);
@@ -647,16 +649,16 @@ export function createApp() {
   });
 
 
-  function validatePatientReferences(input: { doctorId: string; healthPlanId: string }) {
-    const doctor = getDoctorById(input.doctorId);
+  async function validatePatientReferences(input: { doctorId: string; healthPlanId: string }) {
+    const doctor = await getDoctorById(input.doctorId);
     if (!doctor) return { error: 'Médico informado não existe.' };
-    const healthPlan = getHealthPlanById(input.healthPlanId);
+    const healthPlan = await getHealthPlanById(input.healthPlanId);
     if (!healthPlan) return { error: 'Plano de saúde informado não existe.' };
     return { doctor, healthPlan };
   }
 
-  function logPatientActivity(input: { patientId: string; activityType: string; description: string; metadata?: Record<string, unknown>; performedBy?: string }) {
-    createPatientActivity({
+  async function logPatientActivity(input: { patientId: string; activityType: string; description: string; metadata?: Record<string, unknown>; performedBy?: string }) {
+    await createPatientActivity({
       patientId: input.patientId,
       activityType: input.activityType,
       description: input.description,
@@ -665,86 +667,86 @@ export function createApp() {
     });
   }
 
-  app.get('/api/customers', (req: Request, res: Response) => {
+  app.get('/api/customers', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    const items = listCustomers(q);
+    const items = await listCustomers(q);
     return res.json({ items, legacy: true, patientsV2Enabled: featureFlags.patients_v2 });
   });
 
-  app.post('/api/customers', (req: Request, res: Response) => {
+  app.post('/api/customers', async (req: Request, res: Response) => {
     const parsed = customerCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const refs = validatePatientReferences(parsed.data);
+    const refs = await validatePatientReferences(parsed.data);
     if ('error' in refs) return res.status(400).json({ error: refs.error });
 
-    const item = createCustomer(parsed.data);
+    const item = await createCustomer(parsed.data);
     const authUser = getAuthUser(req);
-    logPatientActivity({ patientId: item.id, activityType: 'patient_created', description: 'Cadastro de paciente criado.', metadata: { source: 'customers' }, performedBy: authUser.id });
+    await logPatientActivity({ patientId: item.id, activityType: 'patient_created', description: 'Cadastro de paciente criado.', metadata: { source: 'customers' }, performedBy: authUser.id });
     return res.status(201).json({ item });
   });
 
-  app.get('/api/customers/:customerId', (req: Request, res: Response) => {
-    const item = getCustomerById(req.params.customerId);
+  app.get('/api/customers/:customerId', async (req: Request, res: Response) => {
+    const item = await getCustomerById(req.params.customerId);
     if (!item) return res.status(404).json({ error: 'Cliente não encontrado' });
     return res.json({ item });
   });
 
-  app.patch('/api/customers/:customerId', (req: Request, res: Response) => {
+  app.patch('/api/customers/:customerId', async (req: Request, res: Response) => {
     const parsed = customerUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const refs = validatePatientReferences(parsed.data);
+    const refs = await validatePatientReferences(parsed.data);
     if ('error' in refs) return res.status(400).json({ error: refs.error });
 
-    const item = updateCustomer(req.params.customerId, parsed.data);
+    const item = await updateCustomer(req.params.customerId, parsed.data);
     if (!item) return res.status(404).json({ error: 'Cliente não encontrado' });
     const authUser = getAuthUser(req);
-    logPatientActivity({ patientId: item.id, activityType: 'patient_updated', description: 'Cadastro de paciente atualizado.', metadata: { source: 'customers' }, performedBy: authUser.id });
+    await logPatientActivity({ patientId: item.id, activityType: 'patient_updated', description: 'Cadastro de paciente atualizado.', metadata: { source: 'customers' }, performedBy: authUser.id });
     return res.json({ item });
   });
 
 
-  app.get('/api/patients', (req: Request, res: Response) => {
+  app.get('/api/patients', async (req: Request, res: Response) => {
     if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
     const q = req.query.q?.toString();
-    const items = listCustomers(q);
+    const items = await listCustomers(q);
     return res.json({ items });
   });
 
-  app.post('/api/patients', (req: Request, res: Response) => {
+  app.post('/api/patients', async (req: Request, res: Response) => {
     if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
     const parsed = customerCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const refs = validatePatientReferences(parsed.data);
+    const refs = await validatePatientReferences(parsed.data);
     if ('error' in refs) return res.status(400).json({ error: refs.error });
 
-    const item = createCustomer(parsed.data);
+    const item = await createCustomer(parsed.data);
     const authUser = getAuthUser(req);
-    logPatientActivity({ patientId: item.id, activityType: 'patient_created', description: 'Cadastro de paciente criado.', metadata: { source: 'patients' }, performedBy: authUser.id });
+    await logPatientActivity({ patientId: item.id, activityType: 'patient_created', description: 'Cadastro de paciente criado.', metadata: { source: 'patients' }, performedBy: authUser.id });
     return res.status(201).json({ item });
   });
 
-  app.patch('/api/patients/:patientId', (req: Request, res: Response) => {
+  app.patch('/api/patients/:patientId', async (req: Request, res: Response) => {
     if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
     const parsed = customerUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const refs = validatePatientReferences(parsed.data);
+    const refs = await validatePatientReferences(parsed.data);
     if ('error' in refs) return res.status(400).json({ error: refs.error });
 
-    const item = updateCustomer(req.params.patientId, parsed.data);
+    const item = await updateCustomer(req.params.patientId, parsed.data);
     if (!item) return res.status(404).json({ error: 'Paciente não encontrado' });
     const authUser = getAuthUser(req);
-    logPatientActivity({ patientId: item.id, activityType: 'patient_updated', description: 'Cadastro de paciente atualizado.', metadata: { source: 'patients' }, performedBy: authUser.id });
+    await logPatientActivity({ patientId: item.id, activityType: 'patient_updated', description: 'Cadastro de paciente atualizado.', metadata: { source: 'patients' }, performedBy: authUser.id });
     return res.json({ item });
   });
 
 
-  app.get('/api/patients/:patientId', (req: Request, res: Response) => {
+  app.get('/api/patients/:patientId', async (req: Request, res: Response) => {
     if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
-    const item = getCustomerById(req.params.patientId);
+    const item = await getCustomerById(req.params.patientId);
     if (!item) return res.status(404).json({ error: 'Paciente não encontrado' });
     return res.json({ item });
   });
@@ -752,23 +754,23 @@ export function createApp() {
 
 
 
-  app.get('/api/patients/:patientId/activities', (req: Request, res: Response) => {
+  app.get('/api/patients/:patientId/activities', async (req: Request, res: Response) => {
     if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
-    const patient = getCustomerById(req.params.patientId);
+    const patient = await getCustomerById(req.params.patientId);
     if (!patient) return res.status(404).json({ error: 'Paciente não encontrado' });
 
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
 
-    return res.json(listPatientActivities(req.params.patientId, pagination.data.page, pagination.data.pageSize));
+    return res.json(await listPatientActivities(req.params.patientId, pagination.data.page, pagination.data.pageSize));
   });
 
 
 
 
-  app.get('/api/patients/:patientId/eligibility', (req: Request, res: Response) => {
+  app.get('/api/patients/:patientId/eligibility', async (req: Request, res: Response) => {
     if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
-    const patient = getCustomerById(req.params.patientId);
+    const patient = await getCustomerById(req.params.patientId);
     if (!patient) return res.status(404).json({ error: 'Paciente não encontrado' });
 
     const eligibility = computePatientEligibility(patient.id);
@@ -780,7 +782,7 @@ export function createApp() {
   app.post('/api/patients/:patientId/contact', async (req: Request, res: Response) => {
     if (!featureFlags.patients_v2) return res.status(503).json({ error: 'Módulo patients_v2 desabilitado por feature flag.' });
     if (!featureFlags.communications) return res.status(503).json({ error: 'Módulo communications desabilitado por feature flag.' });
-    const patient = getCustomerById(req.params.patientId);
+    const patient = await getCustomerById(req.params.patientId);
     if (!patient) return res.status(404).json({ error: 'Paciente não encontrado' });
 
     const parsed = patientContactSchema.safeParse(req.body);
@@ -810,7 +812,7 @@ export function createApp() {
         waitMs: 50,
         onAttemptError: async (attempt, error) => {
           operationalMetrics.contactFailures[parsed.data.type] += 1;
-      logPatientActivity({
+      await logPatientActivity({
             patientId: patient.id,
             activityType: `contact_attempt_${parsed.data.type}`,
             description: `Tentativa ${attempt} de contato (${parsed.data.type}) falhou: ${error.message}`,
@@ -825,7 +827,7 @@ export function createApp() {
     else trackLatency(operationalMetrics.integrationLatency.emailMs, startedAt);
 
     if (!result.ok) {
-      logPatientActivity({
+      await logPatientActivity({
         patientId: patient.id,
         activityType: `contact_failed_${parsed.data.type}`,
         description: `Contato ${parsed.data.type} falhou após ${result.attempt} tentativa(s).`,
@@ -835,7 +837,7 @@ export function createApp() {
       return res.status(502).json({ error: 'Falha ao processar contato com paciente', attempts: result.attempt });
     }
 
-    logPatientActivity({
+    await logPatientActivity({
       patientId: patient.id,
       activityType: `contact_success_${parsed.data.type}`,
       description: `Contato ${parsed.data.type} enviado com sucesso para ${destination}.`,
@@ -847,126 +849,126 @@ export function createApp() {
   });
 
 
-  app.get('/api/health-plans', (req: Request, res: Response) => {
+  app.get('/api/health-plans', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    const items = listHealthPlans(q);
+    const items = await listHealthPlans(q);
     return res.json({ items });
   });
 
-  app.post('/api/health-plans', (req: Request, res: Response) => {
+  app.post('/api/health-plans', async (req: Request, res: Response) => {
     const parsed = healthPlanCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const item = createHealthPlan(parsed.data);
+    const item = await createHealthPlan(parsed.data);
     return res.status(201).json({ item });
   });
 
-  app.patch('/api/health-plans/:healthPlanId', (req: Request, res: Response) => {
+  app.patch('/api/health-plans/:healthPlanId', async (req: Request, res: Response) => {
     const parsed = healthPlanUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const item = updateHealthPlan(req.params.healthPlanId, parsed.data);
+    const item = await updateHealthPlan(req.params.healthPlanId, parsed.data);
     if (!item) return res.status(404).json({ error: 'Plano de saúde não encontrado' });
     return res.json({ item });
   });
 
-  app.get('/api/doctors', (req: Request, res: Response) => {
+  app.get('/api/doctors', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    const items = listDoctors(q);
+    const items = await listDoctors(q);
     return res.json({ items });
   });
 
-  app.post('/api/doctors', (req: Request, res: Response) => {
+  app.post('/api/doctors', async (req: Request, res: Response) => {
     const parsed = doctorCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const item = createDoctor(parsed.data);
+    const item = await createDoctor(parsed.data);
     return res.status(201).json({ item });
   });
 
-  app.get('/api/doctors/:doctorId', (req: Request, res: Response) => {
-    const item = getDoctorById(req.params.doctorId);
+  app.get('/api/doctors/:doctorId', async (req: Request, res: Response) => {
+    const item = await getDoctorById(req.params.doctorId);
     if (!item) return res.status(404).json({ error: 'Médico não encontrado' });
     return res.json({ item });
   });
 
-  app.patch('/api/doctors/:doctorId', (req: Request, res: Response) => {
+  app.patch('/api/doctors/:doctorId', async (req: Request, res: Response) => {
     const parsed = doctorUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const item = updateDoctor(req.params.doctorId, parsed.data);
+    const item = await updateDoctor(req.params.doctorId, parsed.data);
     if (!item) return res.status(404).json({ error: 'Médico não encontrado' });
     return res.json({ item });
   });
 
 
-  app.get('/api/employees', (req: Request, res: Response) => {
+  app.get('/api/employees', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: listEmployees(q) });
+    return res.json({ items: await listEmployees(q) });
   });
 
-  app.post('/api/employees', (req: Request, res: Response) => {
+  app.post('/api/employees', async (req: Request, res: Response) => {
     const parsed = employeeCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    return res.status(201).json({ item: createEmployee(parsed.data) });
+    return res.status(201).json({ item: await createEmployee(parsed.data) });
   });
 
-  app.get('/api/suppliers', (req: Request, res: Response) => {
+  app.get('/api/suppliers', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: listSuppliers(q) });
+    return res.json({ items: await listSuppliers(q) });
   });
 
-  app.post('/api/suppliers', (req: Request, res: Response) => {
+  app.post('/api/suppliers', async (req: Request, res: Response) => {
     const parsed = supplierCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    return res.status(201).json({ item: createSupplier(parsed.data) });
+    return res.status(201).json({ item: await createSupplier(parsed.data) });
   });
 
-  app.get('/api/finished-products', (req: Request, res: Response) => {
+  app.get('/api/finished-products', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: listFinishedProducts(q) });
+    return res.json({ items: await listFinishedProducts(q) });
   });
 
-  app.post('/api/finished-products', (req: Request, res: Response) => {
+  app.post('/api/finished-products', async (req: Request, res: Response) => {
     const parsed = finishedProductCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    return res.status(201).json({ item: createFinishedProduct(parsed.data) });
+    return res.status(201).json({ item: await createFinishedProduct(parsed.data) });
   });
 
-  app.get('/api/raw-materials', (req: Request, res: Response) => {
+  app.get('/api/raw-materials', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: listRawMaterials(q) });
+    return res.json({ items: await listRawMaterials(q) });
   });
 
-  app.post('/api/raw-materials', (req: Request, res: Response) => {
+  app.post('/api/raw-materials', async (req: Request, res: Response) => {
     const parsed = rawMaterialCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    return res.status(201).json({ item: createRawMaterial(parsed.data) });
+    return res.status(201).json({ item: await createRawMaterial(parsed.data) });
   });
 
-  app.get('/api/standard-formulas', (req: Request, res: Response) => {
+  app.get('/api/standard-formulas', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: listStandardFormulas(q) });
+    return res.json({ items: await listStandardFormulas(q) });
   });
 
-  app.post('/api/standard-formulas', (req: Request, res: Response) => {
+  app.post('/api/standard-formulas', async (req: Request, res: Response) => {
     const parsed = standardFormulaCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    return res.status(201).json({ item: createStandardFormula(parsed.data) });
+    return res.status(201).json({ item: await createStandardFormula(parsed.data) });
   });
 
-  app.get('/api/packaging-formulas', (req: Request, res: Response) => {
+  app.get('/api/packaging-formulas', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: listPackagingFormulas(q) });
+    return res.json({ items: await listPackagingFormulas(q) });
   });
 
-  app.post('/api/packaging-formulas', (req: Request, res: Response) => {
+  app.post('/api/packaging-formulas', async (req: Request, res: Response) => {
     const parsed = packagingFormulaCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
-    return res.status(201).json({ item: createPackagingFormula(parsed.data) });
+    return res.status(201).json({ item: await createPackagingFormula(parsed.data) });
   });
 
-  app.post('/api/shipping/quote', (req: Request, res: Response) => {
+  app.post('/api/shipping/quote', async (req: Request, res: Response) => {
     const parsed = shippingQuoteSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -987,7 +989,7 @@ export function createApp() {
     return res.json({ items, specialties: [...new Set(medicines.map((m) => m.specialty))], labs: [...new Set(medicines.map((m) => m.lab))] });
   });
 
-  app.post('/api/medicines', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
+  app.post('/api/medicines', authorize(['admin', 'gerente', 'inventario']), async (req: Request, res: Response) => {
     const parsed = medicineCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -1008,7 +1010,7 @@ export function createApp() {
   });
 
 
-  app.post('/api/prescriptions/parse', (req: Request, res: Response) => {
+  app.post('/api/prescriptions/parse', async (req: Request, res: Response) => {
     const parsed = prescriptionParseSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -1016,7 +1018,7 @@ export function createApp() {
     return res.json(result);
   });
 
-  app.post('/api/prescriptions/parse-document', (req: Request, res: Response) => {
+  app.post('/api/prescriptions/parse-document', async (req: Request, res: Response) => {
     const parsed = prescriptionDocumentSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -1031,20 +1033,20 @@ export function createApp() {
     });
   });
 
-  app.get('/api/inventory/summary', (req: Request, res: Response) => {
+  app.get('/api/inventory/summary', async (req: Request, res: Response) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
     const summary = buildInventorySummary();
     return res.json({ ...summary, ...paginate(summary.items, pagination.data.page, pagination.data.pageSize) });
   });
 
-  app.get('/api/inventory/movements', (req: Request, res: Response) => {
+  app.get('/api/inventory/movements', async (req: Request, res: Response) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
     return res.json(paginate(inventoryMovements, pagination.data.page, pagination.data.pageSize));
   });
 
-  app.post('/api/inventory/lots', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
+  app.post('/api/inventory/lots', authorize(['admin', 'gerente', 'inventario']), async (req: Request, res: Response) => {
     const parsed = inventoryLotSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const authUser = getAuthUser(req);
@@ -1068,7 +1070,7 @@ export function createApp() {
   });
 
 
-  app.post('/api/inventory/entries', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
+  app.post('/api/inventory/entries', authorize(['admin', 'gerente', 'inventario']), async (req: Request, res: Response) => {
     const parsed = inventoryEntrySchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const authUser = getAuthUser(req);
@@ -1092,7 +1094,7 @@ export function createApp() {
     return res.status(201).json({ item: lot, convertedQuantity });
   });
 
-  app.post('/api/inventory/entries/nfe-xml', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
+  app.post('/api/inventory/entries/nfe-xml', authorize(['admin', 'gerente', 'inventario']), async (req: Request, res: Response) => {
     const parsed = inventoryNfeXmlSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const authUser = getAuthUser(req);
@@ -1128,7 +1130,7 @@ export function createApp() {
     return res.status(201).json({ createdLots, unmatched, parsedCount: parsedItems.length });
   });
 
-  app.get('/api/print/labels/:orderId', (req: Request, res: Response) => {
+  app.get('/api/print/labels/:orderId', async (req: Request, res: Response) => {
     const order = orders.find((x) => x.id === req.params.orderId);
     if (!order) return res.status(404).json({ error: 'Pedido não encontrado' });
     const labels = order.items.map((item, index) => ({
@@ -1141,7 +1143,7 @@ export function createApp() {
     return res.json({ items: labels, printableText: labels.map((x) => `${x.labelId} | ${x.patientName} | ${x.medicineName} | Qtd ${x.quantity}`).join('\n') });
   });
 
-  app.get('/api/quality/reports/:orderId', (req: Request, res: Response) => {
+  app.get('/api/quality/reports/:orderId', async (req: Request, res: Response) => {
     const order = orders.find((x) => x.id === req.params.orderId);
     if (!order) return res.status(404).json({ error: 'Pedido não encontrado' });
     const report = {
@@ -1153,7 +1155,7 @@ export function createApp() {
     return res.json({ item: report, printableText: `Laudo ${report.reportId}\nPaciente: ${report.patientName}\n` + report.controls.map((c) => `${c.medicineName}: ${c.status}`).join('\n') });
   });
 
-  app.post('/api/pricing/auto-update', authorize(['admin', 'gerente']), (req: Request, res: Response) => {
+  app.post('/api/pricing/auto-update', authorize(['admin', 'gerente']), async (req: Request, res: Response) => {
     const parsed = autoPricingSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
     const authUser = getAuthUser(req);
@@ -1184,7 +1186,7 @@ export function createApp() {
   });
 
 
-  app.post('/api/budgets', (req: Request, res: Response) => {
+  app.post('/api/budgets', async (req: Request, res: Response) => {
     const parsed = budgetCreateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -1214,7 +1216,7 @@ export function createApp() {
     return res.json({ items: budgets });
   });
 
-  app.get('/api/budgets/:budgetId/manipulation-order', (req: Request, res: Response) => {
+  app.get('/api/budgets/:budgetId/manipulation-order', async (req: Request, res: Response) => {
     const budget = budgets.find((x) => x.id === req.params.budgetId);
     if (!budget) return res.status(404).json({ error: 'Orçamento não encontrado' });
 
@@ -1229,7 +1231,7 @@ export function createApp() {
     return res.json({ item: budget, printableText });
   });
 
-  app.get('/api/budgets/:budgetId/labels', (req: Request, res: Response) => {
+  app.get('/api/budgets/:budgetId/labels', async (req: Request, res: Response) => {
     const budget = budgets.find((x) => x.id === req.params.budgetId);
     if (!budget) return res.status(404).json({ error: 'Orçamento não encontrado' });
 
@@ -1243,7 +1245,7 @@ export function createApp() {
     return res.json({ items: labels, printableText: labels.map((x) => `${x.labelId} | ${x.patientName} | ${x.medicineName}`).join('\n') });
   });
 
-  app.post('/api/scale/readings', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
+  app.post('/api/scale/readings', authorize(['admin', 'gerente', 'inventario']), async (req: Request, res: Response) => {
     const parsed = scaleReadingSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -1265,11 +1267,11 @@ export function createApp() {
     return res.status(201).json({ item: reading });
   });
 
-  app.post('/api/production/standard-formula', authorize(['admin', 'gerente', 'inventario']), (req: Request, res: Response) => {
+  app.post('/api/production/standard-formula', authorize(['admin', 'gerente', 'inventario']), async (req: Request, res: Response) => {
     const parsed = standardProductionSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const formula = listStandardFormulas().find((x) => x.id === parsed.data.formulaId);
+    const formula = (await listStandardFormulas()).find((x: any) => x.id === parsed.data.formulaId);
     if (!formula) return res.status(404).json({ error: 'Fórmula padrão não encontrada' });
 
     const order = {
@@ -1285,17 +1287,17 @@ export function createApp() {
     return res.status(201).json({ item: order, formula });
   });
 
-  app.post('/api/orders', (req: Request, res: Response) => {
+  app.post('/api/orders', async (req: Request, res: Response) => {
     const parsed = saleSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
     const authUser = getAuthUser(req);
     const { items, prescriptionCode, recurring, customerId } = parsed.data;
-    const customer = customerId ? getCustomerById(customerId) : undefined;
+    const customer = customerId ? await getCustomerById(customerId) : undefined;
 
     if (customer) {
-      const doctorExists = getDoctorById(customer.doctorId);
-      const healthPlanExists = getHealthPlanById(customer.healthPlanId);
+      const doctorExists = await getDoctorById(customer.doctorId);
+      const healthPlanExists = await getHealthPlanById(customer.healthPlanId);
       if (!doctorExists || !healthPlanExists) {
         return res.status(400).json({ error: 'Paciente com referência inválida de médico/plano de saúde.' });
       }
@@ -1376,7 +1378,7 @@ export function createApp() {
     orders.unshift(order);
 
     if (customerId) {
-      logPatientActivity({ patientId: customerId, activityType: 'order_created', description: `Pedido ${order.id} criado.`, metadata: { orderId: order.id, total: order.total }, performedBy: authUser.id });
+      await logPatientActivity({ patientId: customerId, activityType: 'order_created', description: `Pedido ${order.id} criado.`, metadata: { orderId: order.id, total: order.total }, performedBy: authUser.id });
     }
 
     const shippingStartedAt = Date.now();
@@ -1405,13 +1407,13 @@ export function createApp() {
     return res.status(201).json({ order, shipment });
   });
 
-  app.get('/api/orders', (req: Request, res: Response) => {
+  app.get('/api/orders', async (req: Request, res: Response) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
     return res.json(paginate(orders, pagination.data.page, pagination.data.pageSize));
   });
 
-  app.patch('/api/orders/:orderId/recurring/confirm', (req: Request, res: Response) => {
+  app.patch('/api/orders/:orderId/recurring/confirm', async (req: Request, res: Response) => {
     const authUser = getAuthUser(req);
     const order = orders.find((o) => o.id === req.params.orderId);
     if (!order) return res.status(404).json({ error: 'Pedido não encontrado' });
@@ -1424,7 +1426,7 @@ export function createApp() {
     return res.json({ order });
   });
 
-  app.get('/api/deliveries', (req: Request, res: Response) => {
+  app.get('/api/deliveries', async (req: Request, res: Response) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
 
@@ -1437,7 +1439,7 @@ export function createApp() {
     return res.json(paginate(filtered, pagination.data.page, pagination.data.pageSize));
   });
 
-  app.patch('/api/deliveries/:orderId', authorize(['admin', 'gerente']), (req: Request, res: Response) => {
+  app.patch('/api/deliveries/:orderId', authorize(['admin', 'gerente']), async (req: Request, res: Response) => {
     const parsed = deliveryUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
@@ -1450,17 +1452,17 @@ export function createApp() {
     }
 
     const order = orders.find((o) => o.id === target.orderId);
-    const linkedPatient = order ? listCustomers().find((c) => c.name === order.patientName && c.email === order.email) : undefined;
+    const linkedPatient = order ? (await listCustomers()).find((c: any) => c.name === order.patientName && c.email === order.email) : undefined;
     if (linkedPatient) {
       const authUser = getAuthUser(req);
-      logPatientActivity({ patientId: linkedPatient.id, activityType: 'delivery_updated', description: `Entrega ${target.orderId} atualizada para status ${target.status}.`, metadata: { orderId: target.orderId, status: target.status }, performedBy: authUser.id });
+      await logPatientActivity({ patientId: linkedPatient.id, activityType: 'delivery_updated', description: `Entrega ${target.orderId} atualizada para status ${target.status}.`, metadata: { orderId: target.orderId, status: target.status }, performedBy: authUser.id });
     }
 
     persistState();
     return res.json({ item: target });
   });
 
-  app.get('/api/tickets/:userId', (req: Request, res: Response) => {
+  app.get('/api/tickets/:userId', async (req: Request, res: Response) => {
     const authUser = getAuthUser(req);
     if (authUser.role === 'operador' && authUser.id !== req.params.userId) return res.status(403).json({ error: 'Sem permissão para visualizar tickets de outro usuário' });
 
@@ -1468,7 +1470,7 @@ export function createApp() {
     return res.json({ items });
   });
 
-  app.get('/api/dashboard/:role?', (req: Request, res: Response) => {
+  app.get('/api/dashboard/:role?', async (req: Request, res: Response) => {
     const authUser = getAuthUser(req);
     const totalSales = orders.reduce((acc, order) => acc + order.total, 0);
     const reminders = buildRecurringReminders(orders);

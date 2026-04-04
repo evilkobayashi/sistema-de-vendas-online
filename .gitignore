@@ -3,3 +3,8 @@ dist/
 coverage/
 .DS_Store
 .runtime-data/
+
+/generated/prisma
+.env  
+*.db  
+refactor.mjs 
