@@ -92,3 +92,11 @@ export function persistState() {
   fs.writeFileSync(tmpFile, payload, 'utf8');
   fs.renameSync(tmpFile, storeFile);
 }
+
+// Reset in-memory mutable state to original seed values (used in tests)
+export function resetInMemoryState() {
+  inventoryLots.forEach((lot) => { lot.reserved = 0; });
+  replaceArrayInPlace(inventoryMovements, []);
+  replaceArrayInPlace(orders, []);
+  replaceArrayInPlace(deliveries, []);
+}

@@ -17,7 +17,6 @@ import {
   type DeliveryStatus,
   type InventoryLot,
   type Order,
-  type Role,
   type User
 } from './data.js';
 import { loadPersistentState, persistState } from './store.js';
@@ -25,6 +24,15 @@ import { createCustomer, createDoctor, createEmployee, createFinishedProduct, cr
 import { createShipmentWithFallback, quoteWithFallback } from './shipping.js';
 import { dialerProvider, emailProvider, executeWithRetries } from './communications.js';
 import { getFeatureFlags } from './featureFlags.js';
+import { computePatientEligibility, calculateRunOutDate, parsePrescriptionToSuggestions, buildRecurringReminders, reserveStockFefo, buildInventorySummary, addDays, availableQuantityByMedicine, extractTextFromDocument } from './biz-logic.js';
+import { authRequired, authorize, getAuthUser, JWT_SECRET as moduleJWT_SECRET } from './middlewares/auth.js';
+import { loginRateLimiter } from './middlewares/rateLimit.js';
+import { requestIdMiddleware } from './middlewares/requestId.js';
+import { isValidDeliveryTransition } from './middlewares/deliveryStateMachine.js';
+import { parseXml } from '@rgrove/parse-xml';
+import helmet from 'helmet';
+import cors from 'cors';
+import { requestLogger } from './middlewares/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -136,7 +144,7 @@ const customerCreateSchema = z.object({
   address: z.string().min(5)
 });
 
-const customerUpdateSchema = customerCreateSchema;
+const customerUpdateSchema = customerCreateSchema.partial();
 
 const doctorCreateSchema = z.object({
   name: z.string().min(2),
@@ -146,7 +154,7 @@ const doctorCreateSchema = z.object({
   phone: z.string().min(8)
 });
 
-const doctorUpdateSchema = doctorCreateSchema;
+const doctorUpdateSchema = doctorCreateSchema.partial();
 
 const healthPlanCreateSchema = z.object({
   name: z.string().min(2),
@@ -154,7 +162,7 @@ const healthPlanCreateSchema = z.object({
   registrationCode: z.string().min(3)
 });
 
-const healthPlanUpdateSchema = healthPlanCreateSchema;
+const healthPlanUpdateSchema = healthPlanCreateSchema.partial();
 
 
 const employeeCreateSchema = z.object({
@@ -258,213 +266,17 @@ const medicineCreateSchema = z.object({
   specialty: z.string().min(2),
   description: z.string().min(5).max(300),
   controlled: z.coerce.boolean().default(false),
-  image: z.string().url().or(z.string().startsWith('data:image/')).or(z.literal(''))
+  image: z.string().url().or(z.string().startsWith('data:image/')).or(z.literal('')).default('')
 });
 
 type Session = { user: Omit<User, 'password'>; expiresAt: number };
 const sessions = new Map<string, Session>();
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret';
+const JWT_SECRET = moduleJWT_SECRET;
 
 const budgets: Array<{ id: string; patientName: string; doctorName?: string; prescriptionText: string; suggestedItems: Array<{ medicineId: string; medicineName: string; confidence: number; quantitySuggestion: number }>; status: 'draft' | 'approved'; createdAt: string }> = [];
 const scaleReadings: Array<{ id: string; quoteId: string; medicineId: string; expectedWeightGrams: number; measuredWeightGrams: number; deviationPercent: number; status: 'ok' | 'alert'; createdAt: string }> = [];
 const productionOrders: Array<{ id: string; formulaId: string; batchSize: number; operator: string; status: 'planejada' | 'em_producao' | 'concluida'; createdAt: string }> = [];
-
-
-type AuthenticatedRequest = Request & { authUser: Omit<User, 'password'> };
-
-function getAuthUser(req: Request) {
-  return (req as unknown as AuthenticatedRequest).authUser;
-}
-
-function createToken() {
-  return crypto.randomBytes(24).toString('hex');
-}
-
-function cleanExpiredSessions() {
-  const now = Date.now();
-  for (const [token, session] of sessions.entries()) {
-    if (session.expiresAt <= now) sessions.delete(token);
-  }
-}
-
-
-function authRequired(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.header('authorization');
-  const token = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
-  if (!token) return res.status(401).json({ error: 'Token ausente' });
-  try {
-    const payload = jwt.verify(token, JWT_SECRET) as Omit<User, 'password'>;
-    (req as AuthenticatedRequest).authUser = payload;
-    return next();
-  } catch (err) {
-    return res.status(401).json({ error: 'Sessão inválida ou expirada' });
-  }
-}
-
-
-function authorize(roles: Role[]) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const authUser = getAuthUser(req);
-    if (!roles.includes(authUser.role)) return res.status(403).json({ error: 'Sem permissão para esta operação' });
-    return next();
-  };
-}
-
-function getDaysUntil(dateIso: string) {
-  return Math.ceil((new Date(dateIso).getTime() - Date.now()) / (24 * 3600 * 1000));
-}
-
-function addDays(startIso: string, days: number) {
-  const dt = new Date(startIso);
-  dt.setDate(dt.getDate() + days);
-  return dt.toISOString().slice(0, 10);
-}
-
-
-function isSameMonthCompetence(a: string, b: string) {
-  const da = new Date(a);
-  const db = new Date(b);
-  return da.getUTCFullYear() === db.getUTCFullYear() && da.getUTCMonth() === db.getUTCMonth();
-}
-
-function firstDayNextMonth(dateIso: string) {
-  const dt = new Date(dateIso);
-  dt.setUTCMonth(dt.getUTCMonth() + 1, 1);
-  dt.setUTCHours(0, 0, 0, 0);
-  return dt.toISOString().slice(0, 10);
-}
-
-function getLastDeliveredDateForPatient(patientId: string) {
-  const delivered = deliveries
-    .filter((d) => d.patientId === patientId && d.status === 'entregue')
-    .map((d) => d.forecastDate)
-    .filter(Boolean)
-    .sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
-
-  return delivered[0];
-}
-
-function computePatientEligibility(patientId: string) {
-  const lastDeliveryDate = getLastDeliveredDateForPatient(patientId);
-  if (!lastDeliveryDate) {
-    return { lastDeliveryDate: undefined, canOrderThisMonth: true, nextEligibleDate: new Date().toISOString().slice(0, 10) };
-  }
-
-  const today = new Date().toISOString().slice(0, 10);
-  const sameMonth = isSameMonthCompetence(lastDeliveryDate, today);
-  return {
-    lastDeliveryDate,
-    canOrderThisMonth: !sameMonth,
-    nextEligibleDate: sameMonth ? firstDayNextMonth(lastDeliveryDate) : today
-  };
-}
-
-function calculateRunOutDate(quantity: number, tabletsPerDay?: number, tabletsPerPackage?: number, treatmentDays?: number) {
-  if (treatmentDays && treatmentDays > 0) return addDays(new Date().toISOString(), treatmentDays);
-  if (!tabletsPerDay || tabletsPerDay <= 0) return undefined;
-  const unitsPerPackage = tabletsPerPackage ?? 30;
-  const totalTablets = quantity * unitsPerPackage;
-  const durationInDays = Math.max(1, Math.ceil(totalTablets / tabletsPerDay));
-  return addDays(new Date().toISOString(), durationInDays);
-}
-
-function normalizeText(value: string) {
-  return value
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-
-function parsePrescriptionToSuggestions(rawText: string) {
-  const text = normalizeText(rawText);
-  const suggestions = medicines
-    .map((medicine) => {
-      const name = normalizeText(medicine.name);
-      const lab = normalizeText(medicine.lab);
-      const tokens = [...new Set(name.split(' ').filter((t) => t.length >= 4))];
-      let score = 0;
-
-      if (text.includes(name)) score += 5;
-      if (text.includes(lab)) score += 1;
-      for (const token of tokens) {
-        if (text.includes(token)) score += 1;
-      }
-
-      return {
-        medicineId: medicine.id,
-        name: medicine.name,
-        controlled: medicine.controlled,
-        confidence: Math.min(0.99, score / 10),
-        reason: score > 0 ? `Termos compatíveis encontrados (${score})` : ''
-      };
-    })
-    .filter((item) => item.confidence > 0)
-    .sort((a, b) => b.confidence - a.confidence)
-    .slice(0, 5);
-
-  return {
-    suggestions,
-    found: suggestions.length > 0
-  };
-}
-
-function extractTextFromDocument(contentBase64: string, mimeType: string) {
-  const raw = Buffer.from(contentBase64, 'base64');
-  const utf = raw.toString('utf8');
-  const latin = raw.toString('latin1');
-
-  const decoded = `${utf}\n${latin}`;
-  const extracted = decoded
-    .replace(/[^\w\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  const isPdf = mimeType.includes('pdf');
-  const isImage = mimeType.startsWith('image/');
-
-  if (isPdf) {
-    return {
-      extractedText: extracted,
-      extractionMethod: 'pdf-text-scan',
-      warning: extracted.length < 20 ? 'PDF sem texto legível. Use PDF pesquisável ou informe texto manualmente.' : undefined
-    };
-  }
-
-  if (isImage) {
-    return {
-      extractedText: extracted,
-      extractionMethod: 'image-metadata-scan',
-      warning: 'Leitura de imagem depende de texto incorporado/metadados. Se não houver sugestão, cole o texto da receita.'
-    };
-  }
-
-  return {
-    extractedText: extracted,
-    extractionMethod: 'generic-binary-scan'
-  };
-}
-
-
-function buildRecurringReminders(items: Order[]) {
-  return items
-    .filter((o) => {
-      if (!o.recurring?.needsConfirmation) return false;
-      const diffDays = getDaysUntil(o.recurring.nextBillingDate);
-      return diffDays >= 0 && diffDays <= 3;
-    })
-    .map((o) => ({
-      orderId: o.id,
-      patientName: o.patientName,
-      nextBillingDate: o.recurring?.nextBillingDate,
-      estimatedTreatmentEndDate: o.estimatedTreatmentEndDate,
-      message: 'Confirmar junto ao cliente a recorrência da compra'
-    }));
-}
 
 function paginate<T>(items: T[], page: number, pageSize: number) {
   const start = (page - 1) * pageSize;
@@ -478,54 +290,9 @@ function paginate<T>(items: T[], page: number, pageSize: number) {
   };
 }
 
-function availableQuantityByMedicine(medicineId: string) {
-  return inventoryLots
-    .filter((lot) => lot.medicineId === medicineId)
-    .reduce((acc, lot) => acc + Math.max(0, lot.quantity - lot.reserved), 0);
-}
-
-function reserveStockFefo(medicineId: string, quantity: number, orderId: string, userId: string) {
-  const lots = inventoryLots
-    .filter((lot) => lot.medicineId === medicineId && lot.quantity - lot.reserved > 0)
-    .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt));
-
-  let missing = quantity;
-  const changes: Array<{ lot: InventoryLot; delta: number }> = [];
-
-  for (const lot of lots) {
-    if (missing <= 0) break;
-    const free = lot.quantity - lot.reserved;
-    const used = Math.min(free, missing);
-    if (used > 0) {
-      changes.push({ lot, delta: used });
-      missing -= used;
-    }
-  }
-
-  if (missing > 0) {
-    throw new Error(`Estoque insuficiente para ${medicineId}. Faltam ${missing} unidade(s).`);
-  }
-
-  for (const change of changes) {
-    change.lot.reserved += change.delta;
-    inventoryMovements.unshift({
-      id: `mov-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-      medicineId,
-      lotId: change.lot.id,
-      type: 'reserva',
-      quantity: change.delta,
-      reason: 'Reserva automática por criação de pedido',
-      relatedOrderId: orderId,
-      createdBy: userId,
-      createdAt: new Date().toISOString()
-    });
-  }
-}
-
-
 function createLotEntry(input: { medicineId: string; batchCode: string; expiresAt: string; quantity: number; unitCost: number; supplier: string; reason: string; createdBy: string; }) {
   const newLot: InventoryLot = {
-    id: `lot-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`,
+    id: crypto.randomUUID(),
     medicineId: input.medicineId,
     batchCode: input.batchCode,
     expiresAt: input.expiresAt,
@@ -553,69 +320,122 @@ function createLotEntry(input: { medicineId: string; batchCode: string; expiresA
 
 function parseNfeItems(xml: string) {
   const items: Array<{ name: string; quantity: number; unitPrice?: number }> = [];
-  const detRegex = /<det[\s\S]*?<\/det>/g;
-  const matches = xml.match(detRegex) || [];
 
-  for (const block of matches) {
-    const name = (block.match(/<xProd>([^<]+)<\/xProd>/)?.[1] || '').trim();
-    const quantity = Number((block.match(/<qCom>([^<]+)<\/qCom>/)?.[1] || '0').replace(',', '.'));
-    const unitPriceRaw = (block.match(/<vUnCom>([^<]+)<\/vUnCom>/)?.[1] || '').replace(',', '.');
-    const unitPrice = unitPriceRaw ? Number(unitPriceRaw) : undefined;
-    if (name && Number.isFinite(quantity) && quantity > 0) items.push({ name, quantity, unitPrice });
-  }
+  try {
+    const doc = parseXml(xml);
+    const detElements = doc.children
+      .filter((n: any): n is any => n.type === 'Element')
+      .flatMap((ele: any) => {
+        if (ele.name === 'NFe' || ele.name === 'nfeProc') {
+          return ele.children
+            .filter((n: any): n is any => n.type === 'Element' && n.name === 'infNFe')
+            .flatMap((inf: any) => inf.children
+              .filter((n: any): n is any => n.type === 'Element' && n.name === 'det'));
+        }
+        return ele.children?.filter((n: any): n is any => n.type === 'Element' && n.name === 'det') ?? [];
+      });
 
-  if (!items.length) {
-    const fallbackName = (xml.match(/<xProd>([^<]+)<\/xProd>/)?.[1] || '').trim();
-    const fallbackQty = Number((xml.match(/<qCom>([^<]+)<\/qCom>/)?.[1] || '0').replace(',', '.'));
-    const unitPriceRaw = (xml.match(/<vUnCom>([^<]+)<\/vUnCom>/)?.[1] || '').replace(',', '.');
-    const unitPrice = unitPriceRaw ? Number(unitPriceRaw) : undefined;
-    if (fallbackName && fallbackQty > 0) items.push({ name: fallbackName, quantity: fallbackQty, unitPrice });
+    for (const det of detElements) {
+      const prod = det.children?.find((n: any) => n.type === 'Element' && n.name === 'prod');
+      if (!prod) continue;
+
+      const name = prod.children?.find((n: any) => n.type === 'Element' && n.name === 'xProd')?.text?.trim();
+      const qty = prod.children?.find((n: any) => n.type === 'Element' && n.name === 'qCom')?.text;
+      const unitPrice = prod.children?.find((n: any) => n.type === 'Element' && n.name === 'vUnCom')?.text;
+
+      if (name) {
+        items.push({
+          name,
+          quantity: Number(qty ?? '0'),
+          unitPrice: unitPrice ? Number(unitPrice) : undefined
+        });
+      }
+    }
+  } catch {
+    // Fallback to regex if XML parsing fails
+    const detRegex = /<det[\s\S]*?<\/det>/g;
+    const matches = xml.match(detRegex) || [];
+    for (const block of matches) {
+      const n = (block.match(/<xProd>([^<]+)<\/xProd>/)?.[1] || '').trim();
+      const q = Number((block.match(/<qCom>([^<]+)<\/qCom>/)?.[1] || '0').replace(',', '.'));
+      const u = (block.match(/<vUnCom>([^<]+)<\/vUnCom>/)?.[1] || '').replace(',', '.');
+      if (n && q > 0) items.push({ name: n, quantity: q, unitPrice: u ? Number(u) : undefined });
+    }
   }
 
   return items;
 }
 
-function buildInventorySummary() {
-  const now = Date.now();
-  const items = medicines.map((medicine) => {
-    const lots = inventoryLots.filter((lot) => lot.medicineId === medicine.id);
-    const stockTotal = lots.reduce((acc, lot) => acc + lot.quantity, 0);
-    const stockAvailable = lots.reduce((acc, lot) => acc + Math.max(0, lot.quantity - lot.reserved), 0);
-    const expiresIn30Days = lots.filter((lot) => {
-      const diff = Math.ceil((new Date(lot.expiresAt).getTime() - now) / 86400000);
-      return diff >= 0 && diff <= 30;
-    }).length;
-    return { medicineId: medicine.id, medicineName: medicine.name, stockTotal, stockAvailable, lotCount: lots.length, expiresIn30Days };
-  });
-
-  return {
-    items,
-    critical: items.filter((item) => item.stockAvailable <= 10).length,
-    nearExpiry: items.reduce((acc, item) => acc + item.expiresIn30Days, 0)
-  };
-}
-
 export function createApp() {
   const app = express();
+
+  // Security & observability middleware (early in the stack)
+  app.use(helmet({ contentSecurityPolicy: false }));
+  app.use(requestIdMiddleware);
+  app.use(requestLogger);
+  app.use(cors({
+    origin: (process.env.CORS_ORIGINS || 'http://localhost:5173,http://localhost:3000').split(','),
+    methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true
+  }));
+
   app.use(express.json({ limit: '2mb' }));
   const publicDir = resolvePublicDir();
   loadPersistentState();
   initDatabase();
 
   app.get('/health/live', (_: Request, res: Response) => res.json({ status: 'ok' }));
-  app.get('/health/ready', (_: Request, res: Response) => res.json({ status: 'ready', sessions: sessions.size }));
 
-  app.post('/api/login', async (req: Request, res: Response) => {
+  app.get('/health/ready', async (_: Request, res: Response) => {
+    const checks: Record<string, 'ok' | 'fail'> = {
+      database: 'ok',
+      filesystem: 'ok',
+    };
+
+    // Check database connectivity
+    try {
+      const { prisma } = await import('./database.js');
+      await prisma().$queryRaw`SELECT 1`;
+    } catch {
+      checks.database = 'fail';
+    }
+
+    // Check persistence directory
+    try {
+      const pathModule = await import('node:path');
+      const storeDir = process.env.RUNTIME_STORE_DIR || pathModule.default.resolve(process.cwd(), '.runtime-data');
+      if (!fs.existsSync(storeDir)) {
+        fs.mkdirSync(storeDir, { recursive: true });
+      }
+      // Verify we can write to the store
+      const testFile = pathModule.default.join(storeDir, '.healthcheck');
+      fs.writeFileSync(testFile, 'ok');
+      fs.unlinkSync(testFile);
+    } catch {
+      checks.filesystem = 'fail';
+    }
+
+    const allOk = Object.values(checks).every((v) => v === 'ok');
+    res.status(allOk ? 200 : 503).json({
+      status: allOk ? 'ready' : 'degraded',
+      checks
+    });
+  });
+
+  app.post('/api/login', loginRateLimiter, async (req: Request, res: Response) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'Payload inválido' });
 
     const employeeCodeNormalized = parsed.data.employeeCode.trim().toUpperCase();
     const passwordNormalized = parsed.data.password.trim();
 
-    const user = users.find((u) => u.employeeCode.trim().toUpperCase() === employeeCodeNormalized && u.password === passwordNormalized);
+    const user = users.find((u) => u.employeeCode.trim().toUpperCase() === employeeCodeNormalized);
     if (!user) return res.status(401).json({ error: 'Credenciais inválidas' });
 
-    
+    const passwordMatch = await bcrypt.compare(passwordNormalized, user.password);
+    if (!passwordMatch) return res.status(401).json({ error: 'Credenciais inválidas' });
+
     const safeUser = { id: user.id, name: user.name, role: user.role, employeeCode: user.employeeCode };
     const token = jwt.sign(safeUser, JWT_SECRET, { expiresIn: '8h' });
 
@@ -649,12 +469,16 @@ export function createApp() {
   });
 
 
-  async function validatePatientReferences(input: { doctorId: string; healthPlanId: string }) {
-    const doctor = await getDoctorById(input.doctorId);
-    if (!doctor) return { error: 'Médico informado não existe.' };
-    const healthPlan = await getHealthPlanById(input.healthPlanId);
-    if (!healthPlan) return { error: 'Plano de saúde informado não existe.' };
-    return { doctor, healthPlan };
+  async function validatePatientReferences(input: { doctorId?: string; healthPlanId?: string }) {
+    if (input.doctorId) {
+      const doctor = await getDoctorById(input.doctorId);
+      if (!doctor) return { error: 'Médico informado não existe.' };
+    }
+    if (input.healthPlanId) {
+      const healthPlan = await getHealthPlanById(input.healthPlanId);
+      if (!healthPlan) return { error: 'Plano de saúde informado não existe.' };
+    }
+    return { ok: true };
   }
 
   async function logPatientActivity(input: { patientId: string; activityType: string; description: string; metadata?: Record<string, unknown>; performedBy?: string }) {
@@ -667,10 +491,15 @@ export function createApp() {
     });
   }
 
+  // NOTE: /api/customers is the legacy patient endpoint. /api/patients (gated by
+  // featureFlags.patients_v2) is the v2 replacement. Both are kept in parallel until
+  // the legacy endpoint is fully retired per roadmap. Do not remove /api/customers yet.
   app.get('/api/customers', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
     const items = await listCustomers(q);
-    return res.json({ items, legacy: true, patientsV2Enabled: featureFlags.patients_v2 });
+    const pagination = paginationSchema.safeParse(req.query);
+    const paginated = pagination.success ? paginate(items, pagination.data.page, pagination.data.pageSize) : { items, total: items.length };
+    return res.json({ ...paginated, legacy: true, patientsV2Enabled: featureFlags.patients_v2 });
   });
 
   app.post('/api/customers', async (req: Request, res: Response) => {
@@ -852,7 +681,8 @@ export function createApp() {
   app.get('/api/health-plans', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
     const items = await listHealthPlans(q);
-    return res.json({ items });
+    const pagination = paginationSchema.safeParse(req.query);
+    return res.json(pagination.success ? paginate(items, pagination.data.page, pagination.data.pageSize) : { items, total: items.length });
   });
 
   app.post('/api/health-plans', async (req: Request, res: Response) => {
@@ -875,7 +705,8 @@ export function createApp() {
   app.get('/api/doctors', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
     const items = await listDoctors(q);
-    return res.json({ items });
+    const pagination = paginationSchema.safeParse(req.query);
+    return res.json(pagination.success ? paginate(items, pagination.data.page, pagination.data.pageSize) : { items, total: items.length });
   });
 
   app.post('/api/doctors', async (req: Request, res: Response) => {
@@ -904,7 +735,12 @@ export function createApp() {
 
   app.get('/api/employees', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: await listEmployees(q) });
+    const employees = await listEmployees(q);
+    const pagination = paginationSchema.safeParse(req.query);
+    if (pagination.success) {
+      return res.json(paginate(employees, pagination.data.page, pagination.data.pageSize));
+    }
+    return res.json({ items: employees, total: employees.length });
   });
 
   app.post('/api/employees', async (req: Request, res: Response) => {
@@ -913,9 +749,56 @@ export function createApp() {
     return res.status(201).json({ item: await createEmployee(parsed.data) });
   });
 
+  const employeePasswordSchema = z.object({ currentPassword: z.string(), newPassword: z.string().min(6) });
+  const employeeUpdatePrismaSchema = employeeCreateSchema.partial().merge(z.object({ role: z.string().min(2) }).partial());
+
+  app.put('/api/employees/:employeeCode/password', authRequired, async (req: Request, res: Response) => {
+    const authUser = getAuthUser(req);
+    const targetCode = req.params.employeeCode.toUpperCase();
+
+    // Only allow changing own password, or allow admin
+    if (authUser.employeeCode.toUpperCase() !== targetCode && authUser.role !== 'admin') {
+      return res.status(403).json({ error: 'Sem permissão para alterar esta senha' });
+    }
+
+    const parsed = employeePasswordSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const target = users.find((u) => u.employeeCode.trim().toUpperCase() === targetCode);
+    if (!target) return res.status(404).json({ error: 'Colaborador não encontrado' });
+
+    const match = await bcrypt.compare(parsed.data.currentPassword, target.password);
+    if (!match) return res.status(401).json({ error: 'Senha atual incorreta' });
+
+    target.password = await bcrypt.hash(parsed.data.newPassword, 10);
+    persistState();
+    return res.json({ ok: true, message: 'Senha atualizada com sucesso' });
+  });
+
+  app.patch('/api/employees/:employeeId', authRequired, authorize(['admin']), async (req: Request, res: Response) => {
+    const parsed = employeeUpdatePrismaSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const { Prisma } = await import('@prisma/client');
+    const db = (await import('./database.js')).prisma();
+    const data: Prisma.EmployeeUpdateInput = {};
+    if (parsed.data.name) data.name = parsed.data.name;
+    if (parsed.data.role) data.role = parsed.data.role;
+    if (parsed.data.email) data.email = parsed.data.email;
+    if (parsed.data.phone) data.phone = parsed.data.phone;
+    if (parsed.data.employeeCode) data.employeeCode = parsed.data.employeeCode;
+
+    return res.json({ item: await db.employee.update({ where: { id: req.params.employeeId }, data }) });
+  });
+
   app.get('/api/suppliers', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: await listSuppliers(q) });
+    const suppliers = await listSuppliers(q);
+    const pagination = paginationSchema.safeParse(req.query);
+    if (pagination.success) {
+      return res.json(paginate(suppliers, pagination.data.page, pagination.data.pageSize));
+    }
+    return res.json({ items: suppliers, total: suppliers.length });
   });
 
   app.post('/api/suppliers', async (req: Request, res: Response) => {
@@ -926,7 +809,12 @@ export function createApp() {
 
   app.get('/api/finished-products', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: await listFinishedProducts(q) });
+    const finishedProducts = await listFinishedProducts(q);
+    const pagination = paginationSchema.safeParse(req.query);
+    if (pagination.success) {
+      return res.json(paginate(finishedProducts, pagination.data.page, pagination.data.pageSize));
+    }
+    return res.json({ items: finishedProducts, total: finishedProducts.length });
   });
 
   app.post('/api/finished-products', async (req: Request, res: Response) => {
@@ -937,7 +825,12 @@ export function createApp() {
 
   app.get('/api/raw-materials', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: await listRawMaterials(q) });
+    const rawMaterials = await listRawMaterials(q);
+    const pagination = paginationSchema.safeParse(req.query);
+    if (pagination.success) {
+      return res.json(paginate(rawMaterials, pagination.data.page, pagination.data.pageSize));
+    }
+    return res.json({ items: rawMaterials, total: rawMaterials.length });
   });
 
   app.post('/api/raw-materials', async (req: Request, res: Response) => {
@@ -948,7 +841,12 @@ export function createApp() {
 
   app.get('/api/standard-formulas', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: await listStandardFormulas(q) });
+    const standardFormulas = await listStandardFormulas(q);
+    const pagination = paginationSchema.safeParse(req.query);
+    if (pagination.success) {
+      return res.json(paginate(standardFormulas, pagination.data.page, pagination.data.pageSize));
+    }
+    return res.json({ items: standardFormulas, total: standardFormulas.length });
   });
 
   app.post('/api/standard-formulas', async (req: Request, res: Response) => {
@@ -959,7 +857,12 @@ export function createApp() {
 
   app.get('/api/packaging-formulas', async (req: Request, res: Response) => {
     const q = req.query.q?.toString();
-    return res.json({ items: await listPackagingFormulas(q) });
+    const packagingFormulas = await listPackagingFormulas(q);
+    const pagination = paginationSchema.safeParse(req.query);
+    if (pagination.success) {
+      return res.json(paginate(packagingFormulas, pagination.data.page, pagination.data.pageSize));
+    }
+    return res.json({ items: packagingFormulas, total: packagingFormulas.length });
   });
 
   app.post('/api/packaging-formulas', async (req: Request, res: Response) => {
@@ -978,7 +881,7 @@ export function createApp() {
     return res.json({ item: result });
   });
 
-  app.get('/api/medicines', (_req: Request, res: Response) => {
+  app.get('/api/medicines', (req: Request, res: Response) => {
     const summary = buildInventorySummary();
     const inventoryMap = new Map(summary.items.map((x) => [x.medicineId, x]));
     const items = medicines.map((med) => ({ ...med, inventory: inventoryMap.get(med.id) }));
@@ -986,7 +889,9 @@ export function createApp() {
     res.setHeader('Cache-Control', 'private, max-age=60');
     res.setHeader('ETag', `W/"meds-${items.length}"`);
 
-    return res.json({ items, specialties: [...new Set(medicines.map((m) => m.specialty))], labs: [...new Set(medicines.map((m) => m.lab))] });
+    const pagination = paginationSchema.safeParse(req.query);
+    const base = { specialties: [...new Set(medicines.map((m) => m.specialty))], labs: [...new Set(medicines.map((m) => m.lab))] };
+    return res.json(pagination.success ? { ...paginate(items, pagination.data.page, pagination.data.pageSize), ...base } : { items, total: items.length, ...base });
   });
 
   app.post('/api/medicines', authorize(['admin', 'gerente', 'inventario']), async (req: Request, res: Response) => {
@@ -994,7 +899,7 @@ export function createApp() {
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
     const newMedicine = {
-      id: `m${medicines.length + 1}`,
+      id: crypto.randomUUID(),
       name: parsed.data.name,
       price: parsed.data.price,
       lab: parsed.data.lab,
@@ -1007,6 +912,42 @@ export function createApp() {
     medicines.unshift(newMedicine);
     persistState();
     return res.status(201).json({ item: newMedicine });
+  });
+
+  app.patch('/api/medicines/:medicineId', authorize(['admin', 'gerente', 'inventario']), async (req: Request, res: Response) => {
+    const medicine = medicines.find((m) => m.id === req.params.medicineId);
+    if (!medicine) return res.status(404).json({ error: 'Medicamento não encontrado' });
+
+    const parsed = medicineCreateSchema.partial().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+    const authUser = getAuthUser(req);
+    Object.assign(medicine, parsed.data);
+    persistState();
+
+    inventoryMovements.unshift({
+      id: crypto.randomUUID(),
+      medicineId: medicine.id,
+      lotId: '',
+      type: 'ajuste',
+      quantity: 0,
+      reason: 'Medicamento atualizado',
+      createdBy: authUser.id,
+      createdAt: new Date().toISOString()
+    });
+
+    return res.json({ item: medicine });
+  });
+
+  app.delete('/api/medicines/:medicineId', authorize(['admin', 'gerente']), async (req: Request, res: Response) => {
+    const idx = medicines.findIndex((m) => m.id === req.params.medicineId);
+    if (idx === -1) return res.status(404).json({ error: 'Medicamento não encontrado' });
+
+    const authUser = getAuthUser(req);
+    const [removed] = medicines.splice(idx, 1);
+    persistState();
+
+    return res.json({ item: removed });
   });
 
 
@@ -1170,7 +1111,7 @@ export function createApp() {
 
     for (const item of impacted) {
       inventoryMovements.unshift({
-        id: `mov-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        id: crypto.randomUUID(),
         medicineId: item.medicineId,
         lotId: '',
         type: 'ajuste',
@@ -1199,7 +1140,7 @@ export function createApp() {
     }));
 
     const budget = {
-      id: `ORC-${new Date().getFullYear()}-${String(budgets.length + 1).padStart(4, '0')}`,
+      id: 'ORC-' + crypto.randomUUID().slice(0, 13).toUpperCase(),
       patientName: parsed.data.patientName,
       doctorName: parsed.data.doctorName,
       prescriptionText: parsed.data.prescriptionText,
@@ -1212,8 +1153,12 @@ export function createApp() {
     return res.status(201).json({ item: budget });
   });
 
-  app.get('/api/budgets', (_req: Request, res: Response) => {
-    return res.json({ items: budgets });
+  app.get('/api/budgets', (req: Request, res: Response) => {
+    const pagination = paginationSchema.safeParse(req.query);
+    if (pagination.success) {
+      return res.json(paginate(budgets, pagination.data.page, pagination.data.pageSize));
+    }
+    return res.json({ items: budgets, total: budgets.length });
   });
 
   app.get('/api/budgets/:budgetId/manipulation-order', async (req: Request, res: Response) => {
@@ -1253,7 +1198,7 @@ export function createApp() {
     const status: 'ok' | 'alert' = Math.abs(deviationPercent) <= 2 ? 'ok' : 'alert';
 
     const reading = {
-      id: `BAL-${Date.now()}`,
+      id: 'BAL-' + crypto.randomUUID().slice(0, 8),
       quoteId: parsed.data.quoteId,
       medicineId: parsed.data.medicineId,
       expectedWeightGrams: parsed.data.expectedWeightGrams,
@@ -1275,7 +1220,7 @@ export function createApp() {
     if (!formula) return res.status(404).json({ error: 'Fórmula padrão não encontrada' });
 
     const order = {
-      id: `PROD-${Date.now()}`,
+      id: 'PROD-' + crypto.randomUUID().slice(0, 8),
       formulaId: formula.id,
       batchSize: parsed.data.batchSize,
       operator: parsed.data.operator,
@@ -1346,7 +1291,7 @@ export function createApp() {
     const discount = recurring ? totalBruto * (recurring.discountPercent / 100) : 0;
     const total = Number((totalBruto - discount).toFixed(2));
 
-    const orderId = `P-${new Date().getFullYear()}-${String(orders.length + 1).padStart(3, '0')}`;
+    const orderId = 'P-' + new Date().getFullYear() + '-' + crypto.randomBytes(3).toString('hex').toUpperCase();
     try {
       for (const item of validMeds) {
         reserveStockFefo(item.medicineId, item.quantity, orderId, authUser.id);
@@ -1381,30 +1326,59 @@ export function createApp() {
       await logPatientActivity({ patientId: customerId, activityType: 'order_created', description: `Pedido ${order.id} criado.`, metadata: { orderId: order.id, total: order.total }, performedBy: authUser.id });
     }
 
-    const shippingStartedAt = Date.now();
-    const shipment = createShipmentWithFallback({
-      orderId: order.id,
-      destinationZip: order.address,
-      weightKg: Math.max(0.3, validMeds.reduce((acc, item) => acc + item.quantity * 0.2, 0)),
-      declaredValue: total
-    });
+    try {
+      const shippingStartedAt = Date.now();
+      const shipment = createShipmentWithFallback({
+        orderId: order.id,
+        destinationZip: order.address,
+        weightKg: Math.max(0.3, validMeds.reduce((acc, item) => acc + item.quantity * 0.2, 0)),
+        declaredValue: total
+      });
 
-    trackLatency(operationalMetrics.integrationLatency.shippingCreateMs, shippingStartedAt);
+      trackLatency(operationalMetrics.integrationLatency.shippingCreateMs, shippingStartedAt);
 
-    deliveries.unshift({
-      orderId: order.id,
-      patientName: order.patientName,
-      patientId: customer?.id,
-      status: 'pendente',
-      forecastDate: addDays(new Date().toISOString(), shipment.etaDays),
-      carrier: shipment.provider,
-      trackingCode: shipment.trackingCode,
-      shippingProvider: shipment.provider,
-      syncStatus: shipment.syncStatus
-    });
+      deliveries.unshift({
+        orderId: order.id,
+        patientName: order.patientName,
+        patientId: customer?.id,
+        status: 'pendente',
+        forecastDate: addDays(new Date().toISOString(), shipment.etaDays),
+        carrier: shipment.provider,
+        trackingCode: shipment.trackingCode,
+        shippingProvider: shipment.provider,
+        syncStatus: shipment.syncStatus
+      });
 
-    persistState();
-    return res.status(201).json({ order, shipment });
+      persistState();
+      return res.status(201).json({ order, shipment });
+    } catch (error) {
+      // Rollback: release reserved stock if post-order operations fail
+      for (const item of validMeds) {
+        for (const lot of inventoryLots) {
+          if (lot.medicineId === item.medicineId && lot.reserved > 0) {
+            const toRelease = Math.min(lot.reserved, item.quantity);
+            lot.reserved -= toRelease;
+            inventoryMovements.unshift({
+              id: crypto.randomUUID(),
+              medicineId: item.medicineId,
+              lotId: lot.id,
+              type: 'ajuste',
+              quantity: toRelease,
+              reason: `Rollback de reserva - falha na criação do pedido ${orderId}`,
+              createdBy: authUser.id,
+              createdAt: new Date().toISOString()
+            });
+          }
+        }
+      }
+      // Remove the partially created order and delivery
+      const orderIdx = orders.findIndex((o) => o.id === orderId);
+      if (orderIdx !== -1) orders.splice(orderIdx, 1);
+      const deliveryIdx = deliveries.findIndex((d) => d.orderId === orderId);
+      if (deliveryIdx !== -1) deliveries.splice(deliveryIdx, 1);
+      persistState();
+      return res.status(500).json({ error: 'Falha ao finalizar pedido. Estoque liberado automaticamente.' });
+    }
   });
 
   app.get('/api/orders', async (req: Request, res: Response) => {
@@ -1445,6 +1419,15 @@ export function createApp() {
 
     const target = deliveries.find((d) => d.orderId === req.params.orderId);
     if (!target) return res.status(404).json({ error: 'Entrega não encontrada' });
+
+    // Validate state machine transition
+    if (parsed.data.status && parsed.data.status !== target.status) {
+      if (!isValidDeliveryTransition(target.status, parsed.data.status)) {
+        return res.status(400).json({
+          error: `Transição inválida: de "${target.status}" para "${parsed.data.status}". Transições válidas: ${target.status === 'pendente' ? '"em_rota"' : target.status === 'em_rota' ? '"entregue"' : 'nenhuma (entrega já finalizada)'}`
+        });
+      }
+    }
 
     Object.assign(target, parsed.data);
     if (parsed.data.status === 'entregue' && !parsed.data.forecastDate) {
@@ -1493,9 +1476,17 @@ export function createApp() {
   app.use(express.static(publicDir));
   app.get('*', (_: Request, res: Response) => res.sendFile(path.join(publicDir, 'index.html')));
 
-  app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    const requestId = res.getHeader('X-Request-Id');
     const message = err instanceof Error ? err.message : 'Erro interno';
-    return res.status(500).json({ error: message });
+    if (process.env.NODE_ENV !== 'test' && res.statusCode >= 500) {
+      console.error(`[ERR] ${req.method} ${req.originalUrl} [${requestId}] ${message}`);
+      if (err instanceof Error && err.stack) console.error(err.stack);
+    }
+    return res.status(500).json({
+      error: message,
+      requestId: requestId ? String(requestId) : undefined
+    });
   });
 
   return app;

@@ -97,10 +97,10 @@ export type Ticket = {
 };
 
 export const users: User[] = [
-  { id: 'u1', name: 'Ana Admin', role: 'admin', employeeCode: '4B-001', password: 'admin123' },
-  { id: 'u2', name: 'Gustavo Gerente', role: 'gerente', employeeCode: '4B-014', password: 'gerente123' },
-  { id: 'u3', name: 'Olivia Operadora', role: 'operador', employeeCode: '4B-101', password: 'operador123' },
-  { id: 'u4', name: 'Igor Inventário', role: 'inventario', employeeCode: '4B-220', password: 'inventario123' }
+  { id: 'u1', name: 'Ana Admin', role: 'admin', employeeCode: '4B-001', password: '$2b$10$JV7C8UwGx9DuydDrYAy09.M8oVpOU9IItWPY/HqcLUyBiE1ktEqaC' },
+  { id: 'u2', name: 'Gustavo Gerente', role: 'gerente', employeeCode: '4B-014', password: '$2b$10$klpm.5/qv1/hPuwAEhZpd.7vY4J7.w7wGFt0ndOTvGNoNeq5nRPOO' },
+  { id: 'u3', name: 'Olivia Operadora', role: 'operador', employeeCode: '4B-101', password: '$2b$10$QkUtQX90.C.x3XsmgHZX5uaDwkyrCnw3ODOOYWaK.cI9vJfhpuWKS' },
+  { id: 'u4', name: 'Igor Inventário', role: 'inventario', employeeCode: '4B-220', password: '$2b$10$pJHYRREMtZcRZ/IAjEuy9e/vpmuCZD1WnmvDu7IZtO6SNq4zPubXG' }
 ];
 
 export const medicines: Medicine[] = [
