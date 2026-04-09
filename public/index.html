@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>4BIO | Sistema Interno de Compras</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">4BIO <span>Interno</span></div>
+      <div class="topbar-actions">
+        <div id="user-badge" class="user-badge hidden"></div>
+        <button id="logout-btn" class="logout-btn hidden" type="button">Logout</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section id="login-panel" class="panel login-panel">
+        <h1>Sistema Interno de Compras</h1>
+        <p>Faça login com seu código de colaborador para registrar pedidos.</p>
+        <form id="login-form">
+          <input name="employeeCode" placeholder="Código interno (ex: 4B-101)" required />
+          <input name="password" type="password" placeholder="Senha" required />
+          <button type="submit">Entrar</button>
+        </form>
+        <small>Teste: 4B-001/admin123 • 4B-014/gerente123 • 4B-101/operador123 • 4B-220/inventario123</small>
+      </section>
+
+      <section id="app" class="hidden">
+        <nav class="tabs">
+          <button class="tab active" data-tab="dashboard"><i class="ph ph-squares-four"></i> Dashboard</button>
+          <button class="tab" data-tab="catalogo"><i class="ph ph-book-open-text"></i> Catálogo</button>
+          <button class="tab" data-tab="estoque"><i class="ph ph-package"></i> Estoque</button>
+          <button class="tab" data-tab="nova-venda"><i class="ph ph-shopping-cart"></i> Nova compra</button>
+          <button class="tab" data-tab="pedidos"><i class="ph ph-receipt"></i> Pedidos</button>
+          <button class="tab" data-tab="entregas"><i class="ph ph-truck"></i> Entregas</button>
+          <button class="tab" data-tab="atendimento"><i class="ph ph-headset"></i> Atendimento</button>
+          <button class="tab" data-tab="clientes"><i class="ph ph-users"></i> Clientes</button>
+          <button class="tab" data-tab="medicos"><i class="ph ph-stethoscope"></i> Médicos</button>
+          <button class="tab" data-tab="planos-saude"><i class="ph ph-heart-half"></i> Planos de saúde</button>
+          <button class="tab" data-tab="cadastros"><i class="ph ph-folder-plus"></i> Cadastros</button>
+          <button class="tab" data-tab="inventario-op"><i class="ph ph-clipboard-text"></i> Inventário</button>
+          <button class="tab" data-tab="orcamentos"><i class="ph ph-calculator"></i> Orçamentos</button>
+        </nav>
+
+        <section id="dashboard" class="tab-content active panel"></section>
+        <section id="catalogo" class="tab-content panel"></section>
+        <section id="estoque" class="tab-content panel"></section>
+        <section id="nova-venda" class="tab-content panel"></section>
+        <section id="pedidos" class="tab-content panel"></section>
+        <section id="entregas" class="tab-content panel"></section>
+        <section id="atendimento" class="tab-content panel"></section>
+        <section id="clientes" class="tab-content panel"></section>
+        <section id="medicos" class="tab-content panel"></section>
+        <section id="planos-saude" class="tab-content panel"></section>
+        <section id="cadastros" class="tab-content panel"></section>
+        <section id="inventario-op" class="tab-content panel"></section>
+        <section id="orcamentos" class="tab-content panel"></section>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
