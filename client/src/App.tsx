@@ -20,6 +20,7 @@ import Inventario from './pages/Inventario';
 import Orcamentos from './pages/Orcamentos';
 import Recorrencias from './pages/Recorrencias';
 import Usuarios from './pages/Usuarios';
+import Simulacao from './pages/Simulacao';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('auth_token');
@@ -70,6 +71,7 @@ export default function App() {
               <Route path="orcamentos" element={<Orcamentos />} />
               <Route path="recorrencias" element={<Recorrencias />} />
               <Route path="usuarios" element={<Usuarios />} />
+              <Route path="simulacao" element={<Simulacao />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

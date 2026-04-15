@@ -85,6 +85,7 @@ export default function Layout() {
     { to: '/inventario', icon: 'ph ph-clipboard-text', label: 'Inventário' },
     { to: '/orcamentos', icon: 'ph ph-calculator', label: 'Orçamentos' },
     { to: '/usuarios', icon: 'ph ph-user-gear', label: 'Usuários' },
+    { to: '/simulacao', icon: 'ph ph-robot', label: 'Simulador' },
   ];
 
   const getRoleLabel = (role: string) => {

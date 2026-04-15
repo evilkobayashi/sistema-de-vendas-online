@@ -94,6 +94,14 @@ import { requestLogger } from './middlewares/logger.js';
 import { errorHandler } from './middlewares/errorHandler.js';
 import { cache } from './utils/cache.js';
 import { auditService } from './services/AuditService.js';
+import {
+  startSimulation,
+  stopSimulation,
+  getSimulationState,
+  updateSimulationSpeed,
+  updateSimulationRate,
+  clearSimulationHistory,
+} from './utils/simulation.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1097,6 +1105,47 @@ export function createApp() {
       return res.json(paginate(suppliers, pagination.data.page, pagination.data.pageSize));
     }
     return res.json({ items: suppliers, total: suppliers.length });
+  });
+
+  // Simulation endpoints (Admin only)
+  app.get('/api/simulation/status', authRequired, authorize(['admin']), (_req: Request, res: Response) => {
+    return res.json(getSimulationState());
+  });
+
+  app.post('/api/simulation/start', authRequired, authorize(['admin']), (_req: Request, res: Response) => {
+    startSimulation();
+    return res.json({ ok: true, message: 'Simulação iniciada' });
+  });
+
+  app.post('/api/simulation/stop', authRequired, authorize(['admin']), (_req: Request, res: Response) => {
+    stopSimulation();
+    return res.json({ ok: true, message: 'Simulação pausada' });
+  });
+
+  app.patch('/api/simulation/config', authRequired, authorize(['admin']), (req: Request, res: Response) => {
+    const { speed, actionsPerMinute } = req.body;
+    if (speed !== undefined) updateSimulationSpeed(Number(speed));
+    if (actionsPerMinute !== undefined) updateSimulationRate(Number(actionsPerMinute));
+    return res.json({ ok: true, config: getSimulationState() });
+  });
+
+  app.delete('/api/simulation/history', authRequired, authorize(['admin']), (_req: Request, res: Response) => {
+    clearSimulationHistory();
+    return res.json({ ok: true, message: 'Histórico limpo' });
+  });
+
+  app.post('/api/simulation/action', authRequired, authorize(['admin']), (req: Request, res: Response) => {
+    const state = getSimulationState();
+    const action = {
+      id: `manual-${Date.now()}`,
+      type: req.body.type || 'order',
+      description: req.body.description || 'Ação manual simulada',
+      timestamp: new Date().toISOString(),
+      user: req.body.user || 'Sistema',
+    };
+    state.actions.unshift(action);
+    state.actions = state.actions.slice(0, 100);
+    return res.json({ ok: true, action });
   });
 
   app.post('/api/suppliers', async (req: Request, res: Response) => {
