@@ -13,7 +13,7 @@ function getColorForValue(value: number, thresholds: { green: number; yellow: nu
 export default function Dashboard() {
   const [data, setData] = useState<any>(null);
   const [metrics, setMetrics] = useState<any>(null);
-  const [loading] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [processingOrder, setProcessingOrder] = useState<string | null>(null);
   const [simulationStats, setSimulationStats] = useState<any>(null);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
@@ -31,6 +31,8 @@ export default function Dashboard() {
       setLastUpdate(new Date());
     } catch (err) {
       console.error('Erro ao carregar dashboard:', err);
+    } finally {
+      setLoading(false);
     }
   };
 
