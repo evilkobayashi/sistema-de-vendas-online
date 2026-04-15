@@ -13,32 +13,35 @@ function getColorForValue(value: number, thresholds: { green: number; yellow: nu
 export default function Dashboard() {
   const [data, setData] = useState<any>(null);
   const [metrics, setMetrics] = useState<any>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading] = useState(true);
   const [processingOrder, setProcessingOrder] = useState<string | null>(null);
+  const [simulationStats, setSimulationStats] = useState<any>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
 
   const loadData = async () => {
     try {
-      const [dash, met] = await Promise.all([api.get('/dashboard'), api.get('/metrics/operational').catch(() => null)]);
+      const [dash, met, sim] = await Promise.all([
+        api.get('/dashboard'),
+        api.get('/metrics/operational').catch(() => null),
+        api.get('/simulation/status').catch(() => null),
+      ]);
       setData(dash);
       setMetrics(met);
+      setSimulationStats(sim);
+      setLastUpdate(new Date());
     } catch (err) {
       console.error('Erro ao carregar dashboard:', err);
     }
   };
 
   useEffect(() => {
-    (async () => {
-      try {
-        const [dash, met] = await Promise.all([
-          api.get('/dashboard'),
-          api.get('/metrics/operational').catch(() => null),
-        ]);
-        setData(dash);
-        setMetrics(met);
-      } finally {
-        setLoading(false);
-      }
-    })();
+    loadData();
+
+    const interval = setInterval(() => {
+      loadData();
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const handleConfirmRecurrence = async (orderId: string) => {
@@ -96,12 +99,101 @@ export default function Dashboard() {
   return (
     <>
       <div className="dashboard-header">
-        <h2>Dashboard Operacional</h2>
-        <p className="dashboard-subtitle">Visão geral das operações do sistema</p>
+        <div>
+          <h2>Dashboard Operacional</h2>
+          <p className="dashboard-subtitle">Visão geral das operações do sistema</p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          {simulationStats?.enabled && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                padding: '8px 12px',
+                background: 'linear-gradient(135deg, #10b981, #059669)',
+                borderRadius: 8,
+                color: 'white',
+                fontSize: 13,
+                fontWeight: 600,
+              }}
+            >
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: '#fff',
+                  animation: 'pulse 1.5s infinite',
+                }}
+              />
+              SIMULAÇÃO ATIVA
+            </div>
+          )}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              fontSize: 12,
+              color: 'var(--text-muted)',
+            }}
+          >
+            <i className="ph ph-arrows-clockwise" style={{ fontSize: 14 }}></i>
+            Atualizado {lastUpdate.toLocaleTimeString('pt-BR')}
+          </div>
+        </div>
       </div>
 
       <div className="dashboard-grid">
         <div className="dashboard-main">
+          {simulationStats?.enabled && (
+            <div className="panel" style={{ marginBottom: 20, padding: 16 }}>
+              <h4 style={{ margin: '0 0 16px 0', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <i className="ph ph-robot" style={{ color: '#10b981' }}></i>
+                Atividades Simuladas
+              </h4>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+                <div
+                  style={{ textAlign: 'center', padding: 12, background: 'rgba(16, 185, 129, 0.1)', borderRadius: 8 }}
+                >
+                  <i className="ph ph-receipt" style={{ fontSize: 24, color: '#10b981' }}></i>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#10b981' }}>
+                    {simulationStats.stats?.ordersCreated || 0}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Pedidos</div>
+                </div>
+                <div
+                  style={{ textAlign: 'center', padding: 12, background: 'rgba(245, 158, 11, 0.1)', borderRadius: 8 }}
+                >
+                  <i className="ph ph-ticket" style={{ fontSize: 24, color: '#f59e0b' }}></i>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#f59e0b' }}>
+                    {simulationStats.stats?.ticketsCreated || 0}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Tickets</div>
+                </div>
+                <div
+                  style={{ textAlign: 'center', padding: 12, background: 'rgba(59, 130, 246, 0.1)', borderRadius: 8 }}
+                >
+                  <i className="ph ph-truck" style={{ fontSize: 24, color: '#3b82f6' }}></i>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#3b82f6' }}>
+                    {simulationStats.stats?.deliveriesUpdated || 0}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Entregas</div>
+                </div>
+                <div
+                  style={{ textAlign: 'center', padding: 12, background: 'rgba(139, 92, 246, 0.1)', borderRadius: 8 }}
+                >
+                  <i className="ph ph-user-plus" style={{ fontSize: 24, color: '#8b5cf6' }}></i>
+                  <div style={{ fontSize: 24, fontWeight: 700, color: '#8b5cf6' }}>
+                    {simulationStats.stats?.customersCreated || 0}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase' }}>Clientes</div>
+                </div>
+              </div>
+            </div>
+          )}
+
           <div className="kpis-grid">
             <KPI
               value={ind.pedidos}
@@ -434,7 +526,10 @@ function SkeletonBlock() {
           }}
         />
       ))}
-      <style>{`@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }`}</style>
+      <style>{`
+        @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+      `}</style>
     </div>
   );
 }
