@@ -1,4 +1,4 @@
-# 4bio | Sistema Interno de Vendas de Medicamentos
+# Sistema Interno de Vendas de Medicamentos
 
 Sistema web corporativo completo para operação interna de vendas da 4bio, com foco em performance, fluxo operacional rápido, RBAC e gestão fim a fim (venda, atendimento e entrega).
 
