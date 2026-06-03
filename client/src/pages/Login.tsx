@@ -1,24 +1,26 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import api from '../api';
+
+interface LoginResponse {
+  token?: string;
+  user?: unknown;
+}
 
 export default function Login() {
   const [employeeCode, setEmployeeCode] = useState('');
   const [password, setPassword] = useState('');
-  const navigate = useNavigate();
-
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       // The backend expects normal POST to /login
-      const res: any = await api.post('/login', { employeeCode, password });
+      const res = await api.post('/login', { employeeCode, password }) as unknown as LoginResponse;
       if (res.token) {
         localStorage.setItem('auth_token', res.token);
         localStorage.setItem('auth_user', JSON.stringify(res.user));
         // Force reload to update token states, or use Context (reload is simpler for legacy compat atm)
         window.location.href = '/';
       }
-    } catch (err) {
+    } catch {
       // Error handled by api interceptor
     }
   };
