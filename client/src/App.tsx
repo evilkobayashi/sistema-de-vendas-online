@@ -16,6 +16,7 @@ import PlanosSaude from './pages/PlanosSaude';
 import Cadastros from './pages/Cadastros';
 import Inventario from './pages/Inventario';
 import Orcamentos from './pages/Orcamentos';
+import Analytics from './pages/Analytics';
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const token = localStorage.getItem('auth_token');
@@ -55,6 +56,7 @@ export default function App() {
           <Route path="cadastros" element={<Cadastros />} />
           <Route path="inventario" element={<Inventario />} />
           <Route path="orcamentos" element={<Orcamentos />} />
+          <Route path="analytics" element={<Analytics />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

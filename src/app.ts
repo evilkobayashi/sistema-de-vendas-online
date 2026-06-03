@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
+import multer from 'multer';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,7 +29,7 @@ import { computePatientEligibility, calculateRunOutDate, parsePrescriptionToSugg
 import { authRequired, authorize, getAuthUser, JWT_SECRET as moduleJWT_SECRET } from './middlewares/auth.js';
 import { loginRateLimiter } from './middlewares/rateLimit.js';
 import { requestIdMiddleware } from './middlewares/requestId.js';
-import { isValidDeliveryTransition } from './middlewares/deliveryStateMachine.js';
+import { isValidDeliveryTransition, getDeliveryTransitionError } from './middlewares/deliveryStateMachine.js';
 import { parseXml } from '@rgrove/parse-xml';
 import helmet from 'helmet';
 import cors from 'cors';
@@ -366,6 +367,89 @@ function parseNfeItems(xml: string) {
   return items;
 }
 
+function buildRevenueByMonth() {
+  const map = new Map<string, number>();
+  for (const order of orders) {
+    const month = order.createdAt.slice(0, 7);
+    map.set(month, (map.get(month) ?? 0) + order.total);
+  }
+  return [...map.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([month, revenue]) => ({ month, revenue: Number(revenue.toFixed(2)) }));
+}
+
+function buildTopProducts() {
+  const map = new Map<string, { medicineId: string; name: string; volume: number }>();
+  for (const order of orders) {
+    for (const item of order.items) {
+      const existing = map.get(item.medicineId);
+      if (existing) existing.volume += item.quantity;
+      else map.set(item.medicineId, { medicineId: item.medicineId, name: item.medicineName, volume: item.quantity });
+    }
+  }
+  return [...map.values()].sort((a, b) => b.volume - a.volume).slice(0, 10);
+}
+
+function buildOrderStatusDistribution() {
+  const statusMap = new Map<string, number>();
+  for (const delivery of deliveries) {
+    statusMap.set(delivery.status, (statusMap.get(delivery.status) ?? 0) + 1);
+  }
+  const ordersWithoutDelivery = orders.filter(o => !deliveries.some(d => d.orderId === o.id)).length;
+  if (ordersWithoutDelivery > 0) statusMap.set('sem_entrega', ordersWithoutDelivery);
+  return [...statusMap.entries()].map(([status, count]) => ({ status, count }));
+}
+
+function buildDailyOrderCount(days: number) {
+  const result: Array<{ date: string; count: number }> = [];
+  const now = Date.now();
+  for (let i = days - 1; i >= 0; i--) {
+    const date = new Date(now - i * 86400000).toISOString().slice(0, 10);
+    const count = orders.filter(o => o.createdAt.startsWith(date)).length;
+    result.push({ date, count });
+  }
+  return result;
+}
+
+const pdfUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'application/pdf') cb(null, true);
+    else cb(new Error('Apenas arquivos PDF são aceitos'));
+  }
+});
+
+export interface ParsedMedication {
+  name: string;
+  dosage: string | null;
+  quantity: number | null;
+  rawMatch: string;
+}
+
+function extractMedicationsFromText(text: string): ParsedMedication[] {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 2);
+  const results: ParsedMedication[] = [];
+  const dosagePattern = /(\d+(?:[.,]\d+)?\s*(?:mg|mcg|g|ml|ui|ui\/ml|%|cps?|comp(?:rimido)?s?|cap(?:s|sulas?)?|gotas?))/i;
+  const qtyPattern = /(?:(?:qtd|quant(?:idade)?|caixas?|frascos?|unidades?|embalagens?|cx|fr|un)\.?\s*:?\s*)(\d+)|(\d+)\s*(?:caixa|cx|frasco|fr|unidade|un|embalagem)s?/i;
+
+  for (const line of lines) {
+    const hasMedicalKeyword = /\d+\s*mg|\d+\s*mcg|\d+\s*ml|uso\s+oral|tomar|comprimido|cápsula|gotas?|pomada|injet|solução/i.test(line);
+    if (!hasMedicalKeyword && line.length < 8) continue;
+
+    const dosageMatch = line.match(dosagePattern);
+    const qtyMatch = line.match(qtyPattern);
+    const qty = qtyMatch ? parseInt(qtyMatch[1] ?? qtyMatch[2] ?? '1', 10) : null;
+
+    const nameRaw = line.replace(dosagePattern, '').replace(qtyPattern, '').replace(/\s+/g, ' ').trim();
+    const name = nameRaw.replace(/^[-–•*#\d.]+\s*/, '').trim();
+    if (name.length < 3) continue;
+
+    results.push({ name, dosage: dosageMatch ? dosageMatch[1] : null, quantity: qty, rawMatch: line });
+  }
+  return results;
+}
+
 export function createApp() {
   const app = express();
 
@@ -466,6 +550,14 @@ export function createApp() {
         shippingCreateAvgMs: avgMs(operationalMetrics.integrationLatency.shippingCreateMs)
       }
     });
+  });
+
+  app.get('/api/analytics', authorize(['admin', 'gerente']), (_req: Request, res: Response) => {
+    const revenueByMonth = buildRevenueByMonth();
+    const topProducts = buildTopProducts();
+    const orderStatusDistribution = buildOrderStatusDistribution();
+    const dailyOrderCount = buildDailyOrderCount(30);
+    return res.json({ revenueByMonth, topProducts, orderStatusDistribution, dailyOrderCount });
   });
 
 
@@ -959,6 +1051,34 @@ export function createApp() {
     return res.json(result);
   });
 
+  app.post('/api/prescriptions/parse-pdf', pdfUpload.single('file'), async (req: Request, res: Response) => {
+    if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo PDF enviado. Envie o PDF no campo "file" (multipart/form-data).' });
+    let extractedText: string;
+    let pageCount: number;
+    try {
+      const { PDFParse } = await import('pdf-parse');
+      const tmpPath = path.join(path.resolve(process.cwd(), '.runtime-data'), `rx-${crypto.randomUUID()}.pdf`);
+      fs.mkdirSync(path.dirname(tmpPath), { recursive: true });
+      fs.writeFileSync(tmpPath, req.file.buffer);
+      try {
+        const parser = new PDFParse({ url: `file://${tmpPath.replace(/\\/g, '/')}` });
+        const result = await parser.getText();
+        extractedText = result.text ?? '';
+        pageCount = result.pages?.length ?? 1;
+      } finally {
+        try { fs.unlinkSync(tmpPath); } catch { /* ignore cleanup error */ }
+      }
+    } catch {
+      return res.status(422).json({ error: 'Não foi possível ler o PDF. Certifique-se de que é um PDF pesquisável (não apenas imagem).' });
+    }
+    if (!extractedText || extractedText.trim().length < 8) {
+      return res.status(422).json({ error: 'PDF sem texto pesquisável. Use um PDF gerado digitalmente ou com OCR aplicado.' });
+    }
+    const medications = extractMedicationsFromText(extractedText);
+    const suggestions = parsePrescriptionToSuggestions(extractedText);
+    return res.json({ medications, suggestions: suggestions.suggestions, found: suggestions.found, pageCount, extractedTextLength: extractedText.length });
+  });
+
   app.post('/api/prescriptions/parse-document', async (req: Request, res: Response) => {
     const parsed = prescriptionDocumentSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
@@ -1424,7 +1544,7 @@ export function createApp() {
     if (parsed.data.status && parsed.data.status !== target.status) {
       if (!isValidDeliveryTransition(target.status, parsed.data.status)) {
         return res.status(400).json({
-          error: `Transição inválida: de "${target.status}" para "${parsed.data.status}". Transições válidas: ${target.status === 'pendente' ? '"em_rota"' : target.status === 'em_rota' ? '"entregue"' : 'nenhuma (entrega já finalizada)'}`
+          error: getDeliveryTransitionError(target.status, parsed.data.status)
         });
       }
     }

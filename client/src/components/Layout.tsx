@@ -39,6 +39,7 @@ export default function Layout() {
     { to: '/cadastros',     icon: 'ph ph-folder-plus',     label: 'Cadastros' },
     { to: '/inventario',    icon: 'ph ph-clipboard-text',  label: 'Inventário' },
     { to: '/orcamentos',    icon: 'ph ph-calculator',      label: 'Orçamentos' },
+    { to: '/analytics',     icon: 'ph ph-chart-bar',       label: 'Analytics' },
   ];
 
   return (
