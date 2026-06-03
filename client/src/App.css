@@ -182,3 +182,313 @@
     border-right-color: var(--border);
   }
 }
+
+.cake-game {
+  display: grid;
+  gap: 24px;
+}
+
+.cake-game__hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 24px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at top left, rgba(245, 158, 11, 0.16), transparent 34%),
+    linear-gradient(135deg, rgba(13, 148, 136, 0.12), rgba(0, 0, 0, 0.18));
+}
+
+.cake-game__hero h2 {
+  margin: 10px 0 8px;
+  font-size: 34px;
+}
+
+.cake-game__hero p,
+.cake-game__section-title span,
+.cake-game__item small,
+.cake-game__recipe p,
+.cake-game__recipe small,
+.cake-game__actions span {
+  color: var(--text-muted);
+}
+
+.cake-game__wallet {
+  min-width: 190px;
+  padding: 18px;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: var(--radius-lg);
+  background: rgba(16, 185, 129, 0.12);
+  text-align: center;
+}
+
+.cake-game__wallet span {
+  display: block;
+  font-size: 34px;
+  margin-bottom: 6px;
+}
+
+.cake-game__feedback {
+  padding: 14px 18px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+  font-weight: 700;
+}
+
+.cake-game__feedback--info {
+  background: rgba(59, 130, 246, 0.12);
+  color: #bfdbfe;
+}
+
+.cake-game__feedback--success {
+  background: rgba(16, 185, 129, 0.13);
+  color: #86efac;
+  border-color: rgba(16, 185, 129, 0.32);
+}
+
+.cake-game__feedback--warning {
+  background: rgba(245, 158, 11, 0.13);
+  color: #fde68a;
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+.cake-game__feedback--danger {
+  background: var(--danger-bg);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.32);
+}
+
+.cake-game__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 18px;
+}
+
+.cake-game__section {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.cake-game__section-title {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cake-game__items,
+.cake-game__recipe-list {
+  display: grid;
+  gap: 12px;
+}
+
+.cake-game__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.cake-game__item > div,
+.cake-game__actions > div {
+  display: grid;
+  gap: 4px;
+}
+
+.cake-game__item--owned {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.cake-game__recipes {
+  background: linear-gradient(145deg, rgba(13, 148, 136, 0.08), rgba(0, 0, 0, 0.2));
+}
+
+.cake-game__recipe-list {
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.cake-game__recipe {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.cake-game__recipe--selected {
+  border-color: var(--primary-hover);
+  box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.13);
+}
+
+.cake-game__recipe-button {
+  width: 100%;
+  justify-content: flex-start;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-light);
+}
+
+.cake-game__recipe-button span {
+  font-size: 28px;
+}
+
+.cake-game__requirements {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.cake-game__requirements span {
+  padding: 4px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--text-main);
+}
+
+.cake-game__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-light);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+button:disabled:hover {
+  box-shadow: none;
+  transform: none;
+}
+
+@media (max-width: 720px) {
+  .cake-game__hero,
+  .cake-game__section-title,
+  .cake-game__item,
+  .cake-game__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cake-game__wallet {
+    width: 100%;
+  }
+}
+
+.cake-game__stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.cake-game__wallet--trophy {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.12);
+}
+
+.cake-game__unlimited {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: var(--radius-md);
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.cake-game__employee-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.cake-game__employee-heading > span {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 28px;
+}
+
+.cake-game__employee-heading div {
+  display: grid;
+  gap: 3px;
+}
+
+.cake-game__employee-heading small {
+  color: var(--text-muted);
+}
+
+.cake-game__competitions {
+  background:
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.12), transparent 32%),
+    linear-gradient(145deg, rgba(13, 148, 136, 0.06), rgba(0, 0, 0, 0.2));
+}
+
+@media (max-width: 720px) {
+  .cake-game__stats,
+  .cake-game__unlimited {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+
+.cake-game__wallet--day {
+  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.cake-game__bakery-floor {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  background:
+    linear-gradient(90deg, rgba(245, 158, 11, 0.08), rgba(13, 148, 136, 0.08)),
+    rgba(0, 0, 0, 0.2);
+}
+
+.cake-game__bakery-floor > div {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.cake-game__bakery-floor span {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.cake-game__bakery-floor strong {
+  font-family: var(--font-heading);
+  font-size: 22px;
+}
+
+.cake-game__counter {
+  background:
+    radial-gradient(circle at 12% 20%, rgba(245, 158, 11, 0.12), transparent 28%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.2));
+}
