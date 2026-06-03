@@ -469,7 +469,7 @@ export default function JogoBolos() {
       <div className="cake-game__hero">
         <div>
           <span className="tag">Mini-jogo</span>
-          <h2>Jogo de Bolos</h2>
+          <h2>Hoffmarias Ellit</h2>
           <p>
             Simule uma confeitaria: abra o dia, prepare vitrines, atenda clientes, pague custos e cresça com equipe e troféus.
           </p>
