@@ -1,3 +1,31 @@
+# Calculadora de Ingredientes de Bolo (Python)
+
+Este repositório agora também inclui um aplicativo web em Python para calcular ingredientes de bolo com interface moderna e responsiva.
+
+## Como executar a calculadora de bolo
+
+```bash
+python cake_calculator.py
+```
+
+Depois, acesse `http://localhost:8000`. A porta pode ser alterada com a variável de ambiente `PORT`.
+
+## Como testar a calculadora
+
+```bash
+python -m unittest discover -s tests_python
+```
+
+## Funcionalidades da calculadora
+
+- Escolha entre bolos de baunilha, chocolate e cenoura.
+- Ajuste de 4 a 60 porções.
+- Correção proporcional por tipo de forma.
+- API JSON em `GET /api/calculate`.
+- Interface web responsiva, com resumo, dicas e lista de ingredientes agrupada.
+
+---
+
 # Sistema Interno de Vendas de Medicamentos
 
 Sistema web corporativo completo para operação interna de vendas da 4bio, com foco em performance, fluxo operacional rápido, RBAC e gestão fim a fim (venda, atendimento e entrega).
