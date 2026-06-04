@@ -1,0 +1,244 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Customer {
+  id                    String            @id @default(uuid())
+  name                  String
+  patientCode           String            @default("")
+  insuranceCardCode     String            @default("")
+  healthPlanId          String            @default("")
+  doctorId              String            @default("")
+  insurancePlanName     String            @default("")
+  insuranceProviderName String            @default("")
+  diseaseCid            String            @default("")
+  primaryDoctorId       String            @default("")
+  email                 String
+  phone                 String
+  address               String
+  createdAt             DateTime          @default(now())
+  activities            PatientActivity[]
+
+  @@index([name, email])
+}
+
+model Doctor {
+  id        String   @id @default(uuid())
+  name      String
+  crm       String   @unique
+  specialty String
+  email     String
+  phone     String
+  createdAt DateTime @default(now())
+
+  @@index([name])
+}
+
+model HealthPlan {
+  id               String   @id @default(uuid())
+  name             String
+  providerName     String
+  registrationCode String   @unique
+  createdAt        DateTime @default(now())
+
+  @@index([name])
+}
+
+model PatientActivity {
+  id           String   @id @default(uuid())
+  customer     Customer @relation(fields: [patientId], references: [id])
+  patientId    String
+  activityType String
+  description  String
+  metadataJson String
+  performedBy  String
+  createdAt    DateTime @default(now())
+
+  @@index([patientId, createdAt])
+}
+
+model Employee {
+  id           String   @id @default(uuid())
+  name         String
+  role         String
+  employeeCode String   @unique
+  email        String
+  phone        String
+  createdAt    DateTime @default(now())
+
+  @@index([employeeCode])
+}
+
+model Supplier {
+  id        String   @id @default(uuid())
+  name      String
+  document  String
+  email     String
+  phone     String
+  category  String
+  createdAt DateTime @default(now())
+
+  @@index([name])
+}
+
+model FinishedProduct {
+  id          String   @id @default(uuid())
+  name        String
+  productType String
+  sku         String   @unique
+  unit        String
+  price       Float
+  createdAt   DateTime @default(now())
+
+  @@index([name])
+}
+
+model RawMaterial {
+  id        String   @id @default(uuid())
+  name      String
+  code      String   @unique
+  unit      String
+  cost      Float
+  createdAt DateTime @default(now())
+
+  @@index([name])
+}
+
+model StandardFormula {
+  id           String   @id @default(uuid())
+  name         String
+  version      String
+  productId    String
+  instructions String
+  createdAt    DateTime @default(now())
+
+  @@index([productId])
+}
+
+model PackagingFormula {
+  id              String   @id @default(uuid())
+  name            String
+  productId       String
+  packagingType   String
+  unitsPerPackage Int
+  notes           String
+  createdAt       DateTime @default(now())
+
+  @@index([productId])
+}
+
+// --- New models for in-memory data migration ---
+
+model Medicine {
+  id          String          @id @default(uuid())
+  name        String
+  price       Float
+  lab         String
+  specialty   String
+  controlled  Boolean         @default(false)
+  image       String          @default("")
+  description String          @default("")
+  createdAt   DateTime        @default(now())
+
+  @@index([name, specialty])
+}
+
+model InventoryLot {
+  id         String   @id @default(uuid())
+  medicineId String
+  batchCode  String
+  expiresAt  DateTime
+  quantity   Int
+  reserved   Int       @default(0)
+  unitCost   Float
+  supplier   String
+  createdAt  DateTime @default(now())
+
+  @@index([medicineId, expiresAt])
+}
+
+model InventoryMovement {
+  id        String   @id @default(uuid())
+  medicineId String
+  lotId     String?
+  type      String   // entrada, reserva, baixa, ajuste
+  quantity  Int
+  reason    String
+  relatedOrderId String?
+  createdBy String
+  createdAt DateTime @default(now())
+
+  @@index([medicineId, createdAt])
+  @@index([relatedOrderId])
+}
+
+model Order {
+  id                        String    @id @default(uuid())
+  patientName               String
+  email                     String
+  phone                     String
+  address                   String
+  patientId                 String?
+  total                     Float
+  controlledValidated       Boolean   @default(false)
+  createdBy                 String
+  createdAt                 DateTime  @default(now())
+  estimatedTreatmentEndDate DateTime?
+  recurringDiscountPercent  Float?
+  recurringNextBillingDate  DateTime?
+  recurringNeedsConfirmed Boolean  @default(false)
+  recurringLastConfirmationAt DateTime?
+  recurringConfirmedBy      String?
+  items                     OrderItem[]
+
+  @@index([patientId])
+  @@index([createdAt])
+}
+
+model OrderItem {
+  id                  String  @id @default(uuid())
+  order               Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  orderId             String
+  medicineId          String
+  medicineName        String
+  quantity            Int
+  unitPrice           Float
+  subtotal            Float
+  tabletsPerDay       Int?
+  tabletsPerPackage   Int?
+  treatmentDays       Int?
+  estimatedRunOutDate DateTime?
+
+  @@index([orderId])
+}
+
+model Delivery {
+  orderId          String   @id @default(uuid())
+  patientName      String
+  patientId        String?
+  status           String   @default("pendente") // pendente, em_rota, entregue
+  forecastDate     DateTime
+  carrier          String
+  trackingCode     String?
+  shippingProvider String?
+  syncStatus       String?  @default("ok") // ok, fallback, queued_retry
+
+  @@index([orderId])
+  @@index([status])
+  @@index([patientId])
+}
+
+model Ticket {
+  id         String   @id @default(uuid())
+  subject    String
+  assignedTo String
+  status     String   @default("aberto") // aberto, em_atendimento, fechado
+  createdAt  DateTime @default(now())
+
+  @@index([assignedTo, status])
+}
