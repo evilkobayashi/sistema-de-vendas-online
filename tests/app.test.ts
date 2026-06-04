@@ -60,10 +60,11 @@ describe('4bio internal sales app', () => {
     // Use raw SQL to avoid Prisma overhead and reconnection issues
     try {
       const Database = (await import('better-sqlite3')).default;
-      const db = new Database('./dev.db');
-      const tables = ['PatientActivity', 'Customer', 'Doctor', 'HealthPlan', 'Employee', 'Supplier', 'FinishedProduct', 'RawMaterial', 'StandardFormula', 'PackagingFormula'];
+      // Prisma resolves DATABASE_URL="file:./dev.db" relative to prisma/schema.prisma
+      const db = new Database('./prisma/dev.db');
+      const tables = ['OrderItem', 'InventoryMovement', 'Delivery', 'Order', 'PatientActivity', 'Customer', 'Doctor', 'HealthPlan', 'Employee', 'Supplier', 'FinishedProduct', 'RawMaterial', 'StandardFormula', 'PackagingFormula'];
       for (const t of tables) {
-        try { db.prepare(`DELETE FROM ${t}`).run(); } catch { /* ignore if table doesn't exist */ }
+        try { db.prepare(`DELETE FROM "${t}"`).run(); } catch { /* ignore if table doesn't exist */ }
       }
       db.close();
     } catch { /* better-sqlite3 not available or DB not ready */ }

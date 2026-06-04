@@ -384,9 +384,9 @@ function parseNfeItems(xml: string) {
   return items;
 }
 
-function buildRevenueByMonth() {
+function buildRevenueByMonth(allOrders: import('./data.js').Order[]) {
   const map = new Map<string, number>();
-  for (const order of orders) {
+  for (const order of allOrders) {
     const month = order.createdAt.slice(0, 7);
     map.set(month, (map.get(month) ?? 0) + order.total);
   }
@@ -395,9 +395,9 @@ function buildRevenueByMonth() {
     .map(([month, revenue]) => ({ month, revenue: Number(revenue.toFixed(2)) }));
 }
 
-function buildTopProducts() {
+function buildTopProducts(allOrders: import('./data.js').Order[]) {
   const map = new Map<string, { medicineId: string; name: string; volume: number }>();
-  for (const order of orders) {
+  for (const order of allOrders) {
     for (const item of order.items) {
       const existing = map.get(item.medicineId);
       if (existing) existing.volume += item.quantity;
@@ -407,22 +407,22 @@ function buildTopProducts() {
   return [...map.values()].sort((a, b) => b.volume - a.volume).slice(0, 10);
 }
 
-function buildOrderStatusDistribution() {
+function buildOrderStatusDistribution(allOrders: import('./data.js').Order[], allDeliveries: import('./data.js').Delivery[]) {
   const statusMap = new Map<string, number>();
-  for (const delivery of deliveries) {
+  for (const delivery of allDeliveries) {
     statusMap.set(delivery.status, (statusMap.get(delivery.status) ?? 0) + 1);
   }
-  const ordersWithoutDelivery = orders.filter(o => !deliveries.some(d => d.orderId === o.id)).length;
+  const ordersWithoutDelivery = allOrders.filter(o => !allDeliveries.some(d => d.orderId === o.id)).length;
   if (ordersWithoutDelivery > 0) statusMap.set('sem_entrega', ordersWithoutDelivery);
   return [...statusMap.entries()].map(([status, count]) => ({ status, count }));
 }
 
-function buildDailyOrderCount(days: number) {
+function buildDailyOrderCount(allOrders: import('./data.js').Order[], days: number) {
   const result: Array<{ date: string; count: number }> = [];
   const now = Date.now();
   for (let i = days - 1; i >= 0; i--) {
     const date = new Date(now - i * 86400000).toISOString().slice(0, 10);
-    const count = orders.filter(o => o.createdAt.startsWith(date)).length;
+    const count = allOrders.filter(o => o.createdAt.startsWith(date)).length;
     result.push({ date, count });
   }
   return result;
@@ -580,11 +580,18 @@ export function createApp() {
     });
   });
 
-  app.get('/api/analytics', authorize(['admin', 'gerente']), (_req: Request, res: Response) => {
-    const revenueByMonth = buildRevenueByMonth();
-    const topProducts = buildTopProducts();
-    const orderStatusDistribution = buildOrderStatusDistribution();
-    const dailyOrderCount = buildDailyOrderCount(30);
+  app.get('/api/analytics', authorize(['admin', 'gerente']), async (_req: Request, res: Response) => {
+    const { listOrders: dbListOrders, listDeliveries: dbListDeliveries } = await import('./database.js');
+    const [ordersResult, deliveriesResult] = await Promise.all([
+      dbListOrders(1, 10000),
+      dbListDeliveries({ page: 1, pageSize: 10000 }),
+    ]);
+    const allOrders = ordersResult.items;
+    const allDeliveries = deliveriesResult.items;
+    const revenueByMonth = buildRevenueByMonth(allOrders);
+    const topProducts = buildTopProducts(allOrders);
+    const orderStatusDistribution = buildOrderStatusDistribution(allOrders, allDeliveries);
+    const dailyOrderCount = buildDailyOrderCount(allOrders, 30);
     return res.json({ revenueByMonth, topProducts, orderStatusDistribution, dailyOrderCount });
   });
 
@@ -1256,7 +1263,8 @@ export function createApp() {
   });
 
   app.get('/api/print/labels/:orderId', async (req: Request, res: Response) => {
-    const order = orders.find((x) => x.id === req.params.orderId);
+    const { getOrderById: dbGetOrderById } = await import('./database.js');
+    const order = await dbGetOrderById(req.params.orderId);
     if (!order) return res.status(404).json({ error: 'Pedido não encontrado' });
     const labels = order.items.map((item, index) => ({
       labelId: `${order.id}-${index + 1}`,
@@ -1269,13 +1277,15 @@ export function createApp() {
   });
 
   app.get('/api/quality/reports/:orderId', async (req: Request, res: Response) => {
-    const order = orders.find((x) => x.id === req.params.orderId);
+    const { getOrderById: dbGetOrderById, listInventoryLots: dbListInventoryLots } = await import('./database.js');
+    const order = await dbGetOrderById(req.params.orderId);
     if (!order) return res.status(404).json({ error: 'Pedido não encontrado' });
+    const allLots = await dbListInventoryLots();
     const report = {
       reportId: `QC-${order.id}`,
       patientName: order.patientName,
       createdAt: new Date().toISOString(),
-      controls: order.items.map((item) => ({ medicineName: item.medicineName, lotCount: inventoryLots.filter((lot) => lot.medicineId === item.medicineId).length, status: 'aprovado' }))
+      controls: order.items.map((item) => ({ medicineName: item.medicineName, lotCount: allLots.filter((lot) => lot.medicineId === item.medicineId).length, status: 'aprovado' }))
     };
     return res.json({ item: report, printableText: `Laudo ${report.reportId}\nPaciente: ${report.patientName}\n` + report.controls.map((c) => `${c.medicineName}: ${c.status}`).join('\n') });
   });
@@ -1592,45 +1602,44 @@ export function createApp() {
   app.get('/api/orders', async (req: Request, res: Response) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
-    return res.json(paginate(orders, pagination.data.page, pagination.data.pageSize));
+    const { listOrders: dbListOrders } = await import('./database.js');
+    const result = await dbListOrders(pagination.data.page, pagination.data.pageSize);
+    return res.json({ items: result.items, page: pagination.data.page, pageSize: pagination.data.pageSize, total: result.total, totalPages: Math.max(1, Math.ceil(result.total / pagination.data.pageSize)) });
   });
 
   app.patch('/api/orders/:orderId/recurring/confirm', async (req: Request, res: Response) => {
     const authUser = getAuthUser(req);
-    const order = orders.find((o) => o.id === req.params.orderId);
+    const { getOrderById, confirmOrderRecurring } = await import('./database.js');
+    const order = await getOrderById(req.params.orderId);
     if (!order) return res.status(404).json({ error: 'Pedido não encontrado' });
     if (!order.recurring) return res.status(400).json({ error: 'Pedido não possui recorrência ativa' });
 
-    order.recurring.needsConfirmation = false;
-    order.recurring.lastConfirmationAt = new Date().toISOString();
-    order.recurring.confirmedBy = authUser.id;
-    persistState();
+    const updated = await confirmOrderRecurring(order.id, authUser.id);
 
-    // Persist recurring confirmation to DB
-    const { confirmOrderRecurring } = await import('./database.js');
-    void confirmOrderRecurring(order.id, authUser.id);
+    // Sync in-memory array so other in-session reads stay consistent
+    const idx = orders.findIndex((o) => o.id === order.id);
+    if (idx !== -1 && updated) orders[idx] = updated;
 
-    return res.json({ order });
+    return res.json({ order: updated ?? order });
   });
 
   app.get('/api/deliveries', async (req: Request, res: Response) => {
     const pagination = paginationSchema.safeParse(req.query);
     if (!pagination.success) return res.status(400).json({ error: pagination.error.flatten() });
 
-    const status = req.query.status?.toString() as DeliveryStatus | undefined;
+    const status = req.query.status?.toString();
     const q = req.query.q?.toString().toLowerCase();
-    let filtered = deliveries;
-    if (status) filtered = filtered.filter((d) => d.status === status);
-    if (q) filtered = filtered.filter((d) => d.orderId.toLowerCase().includes(q) || d.patientName.toLowerCase().includes(q));
-
-    return res.json(paginate(filtered, pagination.data.page, pagination.data.pageSize));
+    const { listDeliveries: dbListDeliveries } = await import('./database.js');
+    const result = await dbListDeliveries({ status, q, page: pagination.data.page, pageSize: pagination.data.pageSize });
+    return res.json({ items: result.items, page: pagination.data.page, pageSize: pagination.data.pageSize, total: result.total, totalPages: Math.max(1, Math.ceil(result.total / pagination.data.pageSize)) });
   });
 
   app.patch('/api/deliveries/:orderId', authorize(['admin', 'gerente']), async (req: Request, res: Response) => {
     const parsed = deliveryUpdateSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const target = deliveries.find((d) => d.orderId === req.params.orderId);
+    const { getDeliveryByOrderId, updateDelivery: dbUpdateDelivery, getOrderById: dbGetOrderById } = await import('./database.js');
+    const target = await getDeliveryByOrderId(req.params.orderId);
     if (!target) return res.status(404).json({ error: 'Entrega não encontrada' });
 
     // Validate state machine transition
@@ -1642,30 +1651,33 @@ export function createApp() {
       }
     }
 
-    Object.assign(target, parsed.data);
+    const updateData: Partial<{ status: string; forecastDate: string; carrier: string; trackingCode: string; shippingProvider: string; syncStatus: string }> = {};
+    if (parsed.data.status !== undefined) updateData.status = parsed.data.status;
+    if (parsed.data.forecastDate !== undefined) updateData.forecastDate = parsed.data.forecastDate;
+    if (parsed.data.carrier !== undefined) updateData.carrier = parsed.data.carrier;
+    if (parsed.data.trackingCode !== undefined) updateData.trackingCode = parsed.data.trackingCode;
+    if (parsed.data.shippingProvider !== undefined) updateData.shippingProvider = parsed.data.shippingProvider;
+    if (parsed.data.syncStatus !== undefined) updateData.syncStatus = parsed.data.syncStatus;
+
     if (parsed.data.status === 'entregue' && !parsed.data.forecastDate) {
-      target.forecastDate = new Date().toISOString().slice(0, 10);
+      updateData.forecastDate = new Date().toISOString().slice(0, 10);
     }
 
-    const order = orders.find((o) => o.id === target.orderId);
+    const updated = await dbUpdateDelivery(req.params.orderId, updateData);
+    if (!updated) return res.status(404).json({ error: 'Entrega não encontrada' });
+
+    // Sync in-memory array for biz-logic consistency
+    const memIdx = deliveries.findIndex((d) => d.orderId === req.params.orderId);
+    if (memIdx !== -1) Object.assign(deliveries[memIdx], updated);
+
+    const order = await dbGetOrderById(updated.orderId);
     const linkedPatient = order ? (await listCustomers()).find((c: any) => c.name === order.patientName && c.email === order.email) : undefined;
     if (linkedPatient) {
       const authUser = getAuthUser(req);
-      await logPatientActivity({ patientId: linkedPatient.id, activityType: 'delivery_updated', description: `Entrega ${target.orderId} atualizada para status ${target.status}.`, metadata: { orderId: target.orderId, status: target.status }, performedBy: authUser.id });
+      await logPatientActivity({ patientId: linkedPatient.id, activityType: 'delivery_updated', description: `Entrega ${updated.orderId} atualizada para status ${updated.status}.`, metadata: { orderId: updated.orderId, status: updated.status }, performedBy: authUser.id });
     }
 
-    // Persist delivery update to DB
-    void updateDeliveryInDb(target.orderId, {
-      status: target.status,
-      forecastDate: target.forecastDate,
-      carrier: target.carrier,
-      trackingCode: target.trackingCode,
-      shippingProvider: target.shippingProvider,
-      syncStatus: target.syncStatus,
-    });
-
-    persistState();
-    return res.json({ item: target });
+    return res.json({ item: updated });
   });
 
   app.get('/api/tickets/:userId', async (req: Request, res: Response) => {
@@ -1678,15 +1690,22 @@ export function createApp() {
 
   app.get('/api/dashboard/:role?', async (req: Request, res: Response) => {
     const authUser = getAuthUser(req);
-    const totalSales = orders.reduce((acc, order) => acc + order.total, 0);
-    const reminders = buildRecurringReminders(orders);
+    const { listOrders: dbListOrders, listDeliveries: dbListDeliveries } = await import('./database.js');
+    const [ordersResult, deliveriesResult] = await Promise.all([
+      dbListOrders(1, 10000),
+      dbListDeliveries({ page: 1, pageSize: 10000 }),
+    ]);
+    const allOrders = ordersResult.items;
+    const allDeliveries = deliveriesResult.items;
+    const totalSales = allOrders.reduce((acc, order) => acc + order.total, 0);
+    const reminders = buildRecurringReminders(allOrders);
     const summary = buildInventorySummary();
 
     return res.json({
       role: authUser.role,
       indicators: {
-        pedidos: orders.length,
-        entregasPendentes: deliveries.filter((d) => d.status !== 'entregue').length,
+        pedidos: allOrders.length,
+        entregasPendentes: allDeliveries.filter((d) => d.status !== 'entregue').length,
         ticketsAbertos: tickets.filter((t) => t.status !== 'fechado').length,
         totalSales,
         estoqueCritico: summary.critical,

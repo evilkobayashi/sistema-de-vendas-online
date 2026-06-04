@@ -4,8 +4,9 @@
  */
 
 import request from 'supertest';
-import { createApp } from '../../src/app';
-import { inventoryLots, inventoryMovements, orders, deliveries, medicines } from '../../src/data';
+import { createApp } from '../../src/app.js';
+import { inventoryLots, inventoryMovements, orders, deliveries, medicines } from '../../src/data.js';
+import { loadFromDatabase } from '../../src/store.js';
 import Database from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -30,8 +31,14 @@ async function loginAs(
 
 function cleanSqliteTables() {
   try {
-    const db = new Database('./dev.db');
+    // Prisma resolves DATABASE_URL="file:./dev.db" relative to prisma/schema.prisma
+    const db = new Database('./prisma/dev.db');
+    // Delete order-related tables first (FK constraints), then support tables
     const tables = [
+      'OrderItem',
+      'InventoryMovement',
+      'Delivery',
+      'Order',
       'PatientActivity',
       'Customer',
       'Doctor',
@@ -45,7 +52,7 @@ function cleanSqliteTables() {
     ];
     for (const t of tables) {
       try {
-        db.prepare(`DELETE FROM ${t}`).run();
+        db.prepare(`DELETE FROM "${t}"`).run();
       } catch {
         // table may not exist — ok
       }
@@ -385,5 +392,102 @@ describe('POST /api/prescriptions/parse', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.found).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DB persistence after simulated restart
+// ---------------------------------------------------------------------------
+
+describe('DB persistence across simulated restart', () => {
+  it('order created in one session is visible after loadFromDatabase reload', async () => {
+    const token = await loginAs();
+    const medsRes = await request(app)
+      .get('/api/medicines')
+      .set('Authorization', `Bearer ${token}`);
+    const medicine = medsRes.body.items.find((m: any) => !m.controlled);
+    if (!medicine) return;
+
+    // Create an order — it gets persisted to the DB
+    const createRes = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${token}`)
+      .send({
+        patientName: 'Persist Test Patient',
+        email: 'persist@test.com',
+        phone: '11900000001',
+        address: 'Rua Persist 1',
+        items: [{ medicineId: medicine.id, quantity: 1 }],
+      });
+    expect(createRes.status).toBe(201);
+    const createdOrderId = createRes.body.order.id as string;
+
+    // Simulate a restart: wipe in-memory arrays then reload from DB
+    orders.splice(0, orders.length);
+    deliveries.splice(0, deliveries.length);
+    expect(orders).toHaveLength(0);
+
+    await loadFromDatabase();
+
+    // After reload, the order should be back in memory
+    const reloaded = orders.find((o) => o.id === createdOrderId);
+    expect(reloaded).toBeDefined();
+    expect(reloaded?.patientName).toBe('Persist Test Patient');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Analytics endpoint monthly totals
+// ---------------------------------------------------------------------------
+
+describe('Analytics — monthly totals', () => {
+  it('returns correct revenue totals for orders created in the current month', async () => {
+    const adminToken = await loginAs('4B-001', 'admin123');
+    const medsRes = await request(app)
+      .get('/api/medicines')
+      .set('Authorization', `Bearer ${adminToken}`);
+    const medicine = medsRes.body.items.find((m: any) => !m.controlled);
+    if (!medicine) return;
+
+    // Create two orders with known totals
+    const order1Res = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        patientName: 'Analytics Patient 1',
+        email: 'ana1@test.com',
+        phone: '11900000002',
+        address: 'Rua Analytics 1',
+        items: [{ medicineId: medicine.id, quantity: 1 }],
+      });
+    const order2Res = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        patientName: 'Analytics Patient 2',
+        email: 'ana2@test.com',
+        phone: '11900000003',
+        address: 'Rua Analytics 2',
+        items: [{ medicineId: medicine.id, quantity: 2 }],
+      });
+
+    if (order1Res.status !== 201 || order2Res.status !== 201) return;
+
+    const expectedTotal =
+      order1Res.body.order.total + order2Res.body.order.total;
+    const currentMonth = new Date().toISOString().slice(0, 7);
+
+    const analyticsRes = await request(app)
+      .get('/api/analytics')
+      .set('Authorization', `Bearer ${adminToken}`);
+
+    expect(analyticsRes.status).toBe(200);
+    expect(Array.isArray(analyticsRes.body.revenueByMonth)).toBe(true);
+
+    const monthEntry = analyticsRes.body.revenueByMonth.find(
+      (e: { month: string; revenue: number }) => e.month === currentMonth,
+    );
+    expect(monthEntry).toBeDefined();
+    expect(monthEntry.revenue).toBeCloseTo(expectedTotal, 1);
   });
 });
