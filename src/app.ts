@@ -20,7 +20,19 @@ import {
   type Order,
   type User
 } from './data.js';
-import { loadPersistentState, persistState } from './store.js';
+import {
+  loadPersistentState,
+  loadFromDatabase,
+  persistState,
+  persistOrderToDb,
+  persistDeliveryToDb,
+  updateDeliveryInDb,
+  removeDeliveryFromDb,
+  removeOrderFromDb,
+  persistInventoryLotToDb,
+  syncLotReservedToDb,
+  persistInventoryMovementToDb,
+} from './store.js';
 import { createCustomer, createDoctor, createEmployee, createFinishedProduct, createHealthPlan, createPackagingFormula, createPatientActivity, createRawMaterial, createStandardFormula, createSupplier, getCustomerById, getDoctorById, getHealthPlanById, initDatabase, listCustomers, listDoctors, listEmployees, listFinishedProducts, listHealthPlans, listPackagingFormulas, listPatientActivities, listRawMaterials, listStandardFormulas, listSuppliers, updateCustomer, updateDoctor, updateHealthPlan } from './database.js';
 import { createShipmentWithFallback, quoteWithFallback } from './shipping.js';
 import { dialerProvider, emailProvider, executeWithRetries } from './communications.js';
@@ -305,16 +317,21 @@ function createLotEntry(input: { medicineId: string; batchCode: string; expiresA
   };
 
   inventoryLots.unshift(newLot);
-  inventoryMovements.unshift({
+
+  const movement = {
     id: `mov-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
     medicineId: newLot.medicineId,
     lotId: newLot.id,
-    type: 'entrada',
+    type: 'entrada' as const,
     quantity: newLot.quantity,
     reason: input.reason,
     createdBy: input.createdBy,
     createdAt: new Date().toISOString()
-  });
+  };
+  inventoryMovements.unshift(movement);
+
+  void persistInventoryLotToDb(newLot);
+  void persistInventoryMovementToDb(movement);
 
   return newLot;
 }
@@ -420,6 +437,15 @@ const pdfUpload = multer({
   }
 });
 
+const imageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === 'image/jpeg' || file.mimetype === 'image/png') cb(null, true);
+    else cb(new Error('Apenas imagens JPG ou PNG são aceitas'));
+  }
+});
+
 export interface ParsedMedication {
   name: string;
   dosage: string | null;
@@ -468,6 +494,8 @@ export function createApp() {
   const publicDir = resolvePublicDir();
   loadPersistentState();
   initDatabase();
+  // Load persisted orders/deliveries/inventory from DB into in-memory arrays
+  void loadFromDatabase();
 
   app.get('/health/live', (_: Request, res: Response) => res.json({ status: 'ok' }));
 
@@ -871,9 +899,8 @@ export function createApp() {
     const parsed = employeeUpdatePrismaSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-    const { Prisma } = await import('@prisma/client');
     const db = (await import('./database.js')).prisma();
-    const data: Prisma.EmployeeUpdateInput = {};
+    const data: Record<string, string> = {};
     if (parsed.data.name) data.name = parsed.data.name;
     if (parsed.data.role) data.role = parsed.data.role;
     if (parsed.data.email) data.email = parsed.data.email;
@@ -1017,16 +1044,18 @@ export function createApp() {
     Object.assign(medicine, parsed.data);
     persistState();
 
-    inventoryMovements.unshift({
+    const adjustMov = {
       id: crypto.randomUUID(),
       medicineId: medicine.id,
-      lotId: '',
-      type: 'ajuste',
+      lotId: '' as string | undefined,
+      type: 'ajuste' as const,
       quantity: 0,
       reason: 'Medicamento atualizado',
       createdBy: authUser.id,
       createdAt: new Date().toISOString()
-    });
+    };
+    inventoryMovements.unshift(adjustMov);
+    void persistInventoryMovementToDb(adjustMov);
 
     return res.json({ item: medicine });
   });
@@ -1071,12 +1100,47 @@ export function createApp() {
     } catch {
       return res.status(422).json({ error: 'Não foi possível ler o PDF. Certifique-se de que é um PDF pesquisável (não apenas imagem).' });
     }
-    if (!extractedText || extractedText.trim().length < 8) {
-      return res.status(422).json({ error: 'PDF sem texto pesquisável. Use um PDF gerado digitalmente ou com OCR aplicado.' });
+    const trimmedLength = extractedText.trim().length;
+    if (!extractedText || trimmedLength < 8) {
+      return res.status(422).json({
+        error: 'PDF sem texto pesquisável.',
+        ocr_required: true,
+        ocr_instructions: 'Este PDF não contém texto pesquisável (pode ser uma imagem escaneada). Para extrair o texto, envie a imagem via POST /api/prescriptions/parse-image (JPG ou PNG) para processamento com OCR.',
+        extractedTextLength: trimmedLength
+      });
     }
     const medications = extractMedicationsFromText(extractedText);
     const suggestions = parsePrescriptionToSuggestions(extractedText);
     return res.json({ medications, suggestions: suggestions.suggestions, found: suggestions.found, pageCount, extractedTextLength: extractedText.length });
+  });
+
+  app.post('/api/prescriptions/parse-image', imageUpload.single('file'), async (req: Request, res: Response) => {
+    if (!req.file) return res.status(400).json({ error: 'Nenhuma imagem enviada. Envie a imagem no campo "file" (multipart/form-data).' });
+
+    let extractedText = '';
+    let ocrConfidence = 0;
+
+    try {
+      const { createWorker } = await import('tesseract.js');
+      const worker = await createWorker('por');
+      try {
+        const { data } = await worker.recognize(req.file.buffer);
+        extractedText = data.text ?? '';
+        ocrConfidence = data.confidence ?? 0;
+      } finally {
+        await worker.terminate();
+      }
+    } catch (err) {
+      return res.status(422).json({ error: 'Falha ao processar OCR na imagem.', detail: err instanceof Error ? err.message : String(err) });
+    }
+
+    if (!extractedText || extractedText.trim().length < 4) {
+      return res.json({ medications: [], suggestions: [], found: false, extractedText: '', ocrConfidence, warning: 'OCR não encontrou texto na imagem.' });
+    }
+
+    const medications = extractMedicationsFromText(extractedText);
+    const suggestions = parsePrescriptionToSuggestions(extractedText);
+    return res.json({ medications, suggestions: suggestions.suggestions, found: suggestions.found, extractedText, ocrConfidence, extractedTextLength: extractedText.length });
   });
 
   app.post('/api/prescriptions/parse-document', async (req: Request, res: Response) => {
@@ -1230,16 +1294,18 @@ export function createApp() {
       });
 
     for (const item of impacted) {
-      inventoryMovements.unshift({
+      const priceMov = {
         id: crypto.randomUUID(),
         medicineId: item.medicineId,
-        lotId: '',
-        type: 'ajuste',
+        lotId: '' as string | undefined,
+        type: 'ajuste' as const,
         quantity: 0,
         reason: `${parsed.data.reason} (${parsed.data.percent}%)`,
         createdBy: authUser.id,
         createdAt: new Date().toISOString()
-      });
+      };
+      inventoryMovements.unshift(priceMov);
+      void persistInventoryMovementToDb(priceMov);
     }
 
     persistState();
@@ -1457,17 +1523,34 @@ export function createApp() {
 
       trackLatency(operationalMetrics.integrationLatency.shippingCreateMs, shippingStartedAt);
 
-      deliveries.unshift({
+      const newDelivery = {
         orderId: order.id,
         patientName: order.patientName,
         patientId: customer?.id,
-        status: 'pendente',
+        status: 'pendente' as const,
         forecastDate: addDays(new Date().toISOString(), shipment.etaDays),
         carrier: shipment.provider,
         trackingCode: shipment.trackingCode,
         shippingProvider: shipment.provider,
         syncStatus: shipment.syncStatus
-      });
+      };
+      deliveries.unshift(newDelivery);
+
+      // Persist stock reservations to DB
+      for (const item of validMeds) {
+        for (const lot of inventoryLots) {
+          if (lot.medicineId === item.medicineId && lot.reserved > 0) {
+            void syncLotReservedToDb(lot.id, lot.reserved);
+          }
+        }
+      }
+      // Persist the new inventory movements created by reserveStockFefo
+      for (const mv of inventoryMovements.filter((m) => m.relatedOrderId === orderId)) {
+        void persistInventoryMovementToDb(mv);
+      }
+
+      await persistOrderToDb(order);
+      await persistDeliveryToDb(newDelivery);
 
       persistState();
       return res.status(201).json({ order, shipment });
@@ -1478,16 +1561,19 @@ export function createApp() {
           if (lot.medicineId === item.medicineId && lot.reserved > 0) {
             const toRelease = Math.min(lot.reserved, item.quantity);
             lot.reserved -= toRelease;
-            inventoryMovements.unshift({
+            const rollbackMov = {
               id: crypto.randomUUID(),
               medicineId: item.medicineId,
               lotId: lot.id,
-              type: 'ajuste',
+              type: 'ajuste' as const,
               quantity: toRelease,
               reason: `Rollback de reserva - falha na criação do pedido ${orderId}`,
               createdBy: authUser.id,
               createdAt: new Date().toISOString()
-            });
+            };
+            inventoryMovements.unshift(rollbackMov);
+            void syncLotReservedToDb(lot.id, lot.reserved);
+            void persistInventoryMovementToDb(rollbackMov);
           }
         }
       }
@@ -1496,6 +1582,8 @@ export function createApp() {
       if (orderIdx !== -1) orders.splice(orderIdx, 1);
       const deliveryIdx = deliveries.findIndex((d) => d.orderId === orderId);
       if (deliveryIdx !== -1) deliveries.splice(deliveryIdx, 1);
+      void removeOrderFromDb(orderId);
+      void removeDeliveryFromDb(orderId);
       persistState();
       return res.status(500).json({ error: 'Falha ao finalizar pedido. Estoque liberado automaticamente.' });
     }
@@ -1517,6 +1605,11 @@ export function createApp() {
     order.recurring.lastConfirmationAt = new Date().toISOString();
     order.recurring.confirmedBy = authUser.id;
     persistState();
+
+    // Persist recurring confirmation to DB
+    const { confirmOrderRecurring } = await import('./database.js');
+    void confirmOrderRecurring(order.id, authUser.id);
+
     return res.json({ order });
   });
 
@@ -1560,6 +1653,16 @@ export function createApp() {
       const authUser = getAuthUser(req);
       await logPatientActivity({ patientId: linkedPatient.id, activityType: 'delivery_updated', description: `Entrega ${target.orderId} atualizada para status ${target.status}.`, metadata: { orderId: target.orderId, status: target.status }, performedBy: authUser.id });
     }
+
+    // Persist delivery update to DB
+    void updateDeliveryInDb(target.orderId, {
+      status: target.status,
+      forecastDate: target.forecastDate,
+      carrier: target.carrier,
+      trackingCode: target.trackingCode,
+      shippingProvider: target.shippingProvider,
+      syncStatus: target.syncStatus,
+    });
 
     persistState();
     return res.json({ item: target });
